@@ -1,20 +1,25 @@
-local actors = {}
-
-local manual = require "utils.manual"
-table.insert(actors, manual)
-
 local mod = {}
 mod.__index = mod
 
+local deviceName = ""
+
 function mod.getDeviceName()
-    return manual.getDeviceName()
+    return deviceName
 end
+
+function mod.setDeviceName(name)
+    deviceName = name
+end
+
+local deviceOS = ""
 
 function mod.getDeviceOS()
-    return manual.getDeviceOS()
+    return deviceOS
 end
 
-
+function mod.setDeviceOS(name)
+    deviceOS = name
+end
 
 
 local binarySearch = {}

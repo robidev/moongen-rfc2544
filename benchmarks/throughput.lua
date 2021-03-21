@@ -16,6 +16,28 @@ local barrier       = require "barrier"
 local timer         = require "timer"
 local tikz          = require "utils.tikz"
 local utils         = require "utils.utils"
+local testreport    = require "utils.testreport"
+--local limiter = require "software-ratecontrol"
+
+function log(file, msg, linebreak)
+    print(msg)
+    file:write(msg)
+    if linebreak then
+        file:write("\n")
+    end
+end
+
+local function Split(str,sep)
+   local ret={}
+   local n=1
+   for w in str:gmatch("([^"..sep.."]*)") do
+      ret[n] = ret[n] or w -- only set once (so the blank after a string is ignored)
+      if w=="" then
+         n = n + 1
+      end -- step forwards on a blank but not a string
+   end
+   return ret
+end
 
 local UDP_PORT = 42
 
@@ -30,17 +52,19 @@ end
 setmetatable(benchmark, {__call = benchmark.create})
 
 function benchmark:init(arg)
-    self.duration = arg.duration or 10
-    self.rateThreshold = arg.rateThreshold or 10
-    self.maxLossRate = arg.maxLossRate or 0.001
+    self.duration = arg.duration
+    self.rateThreshold = arg.rateThreshold
+    self.maxLossRate = arg.maxLossRate
 
     self.rxQueues = arg.rxQueues
     self.txQueues = arg.txQueues
 
-    self.numIterations = arg.numIterations or 1
+    self.numIterations = arg.numIterations
     
     self.skipConf = arg.skipConf
     self.dut = arg.dut
+
+    self.rateType = arg.ratetype
 
     self.initialized = true
 end
@@ -162,27 +186,36 @@ function benchmark:bench(frameSize)
         results[iteration] = {spkts = 0, rpkts = 0, mpps = 0, frameSize = frameSize}
         -- loop until no packetloss
         while moongen.running() do
-            
             -- workaround for rate bug
-            local numQueues = rate > (64 * 64) / (84 * 84) * maxLinkRate and rate < maxLinkRate and 3 or 1
+            local numQueues = 1 --rate > (64 * 64) / (84 * 84) * maxLinkRate and rate < maxLinkRate and 3 or 1
             bar:reinit(numQueues + 1)
-            if rate < maxLinkRate then
-                -- not maxLinkRate
-                -- eventual multiple slaves
-                -- set rate is payload rate not wire rate
-                for i=1, numQueues do
-                    printf("set queue %i to rate %d", i, rate * frameSize / (frameSize + 20) / numQueues)
-                    self.txQueues[i]:setRate(rate * frameSize / (frameSize + 20) / numQueues)
-                end
-            else
-                -- maxLinkRate
-                self.txQueues[1]:setRate(rate)
+	    if self.rateType == "hw" then
+		    if rate < maxLinkRate then
+		        -- not maxLinkRate
+		        -- eventual multiple slaves
+		        -- set rate is payload rate not wire rate
+		        for i=1, numQueues do
+		            printf("set queue %i to rate %d", i, rate * frameSize / (frameSize + 20) / numQueues)
+		            self.txQueues[i]:setRate(rate * frameSize / (frameSize + 20) / numQueues)
+		        end
+		    else
+		        -- maxLinkRate
+		        self.txQueues[1]:setRate(rate)
+		    end
             end
             
             local loadTasks = {}
             -- traffic generator
             for i=1, numQueues do
-                table.insert(loadTasks, moongen.startTask("throughputLoadSlave", self.txQueues[i], port, frameSize, self.duration, mod, bar))
+		if self.rateType == "hw" then
+                    table.insert(loadTasks, moongen.startTask("throughputLoadSlave", self.txQueues[i], port, frameSize, self.duration, mod, bar))
+		end
+		if self.rateType == "cbr" then
+                    table.insert(loadTasks, moongen.startTask("throughputLoadSlaveCBR", self.txQueues[i], port, frameSize, self.duration, mod, bar, rate))
+		end
+		if self.rateType == "poison" then
+                    table.insert(loadTasks, moongen.startTask("throughputLoadSlavePoison", self.txQueues[i], port, frameSize, self.duration, mod, bar, rate))
+		end
             end
             
             -- count the incoming packets
@@ -190,7 +223,7 @@ function benchmark:bench(frameSize)
             
             -- wait until all slaves are finished
             local spkts = 0
-            for _, loadTask in pairs(loadTasks) do
+            for i, loadTask in pairs(loadTasks) do
                 spkts = spkts + loadTask:wait()
             end
             local rpkts = ctrTask:wait()
@@ -298,6 +331,147 @@ function throughputLoadSlave(queue, port, frameSize, duration, modifier, bar)
     return totalSent
 end
 
+
+function throughputLoadSlaveCBR(queue, port, frameSize, duration, modifier, bar, rate)
+    --wait for counter slave
+    bar:wait()
+    local delay = (10^12 / 8 / (rate * 10^6)) - (frameSize + 24)
+    if delay < 0 then
+        delay = 0
+    end
+    print( delay )
+    -- gen payload template suggested by RFC2544
+    local udpPayloadLen = frameSize - 46
+    local udpPayload = ffi.new("uint8_t[?]", udpPayloadLen)
+    for i = 0, udpPayloadLen - 1 do
+        udpPayload[i] = bit.band(i, 0xf)
+    end
+
+    local mem = memory.createMemPool(4096, function(buf)
+        local pkt = buf:getUdpPacket()
+        pkt:fill{
+            pktLength = frameSize - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
+            ethSrc = queue, -- get the src mac from the device
+            ethDst = ethDst,
+            -- TODO: too slow with conditional -- eventual launch a second slave for self
+            -- ethDst SHOULD be in 1% of the frames the hardware broadcast address
+            -- for switches ethDst also SHOULD be randomized
+
+            -- if ipDest is dynamical created it is overwritten
+            -- does not affect performance, as self fill is done before any packet is sent
+            ip4Src = "198.18.1.2",
+            ip4Dst = "198.19.1.2",
+            udpSrc = UDP_PORT,
+            -- udpSrc will be set later as it varies
+        }
+        -- fill udp payload with prepared udp payload
+        ffi.copy(pkt.payload, udpPayload, udpPayloadLen)
+    end)
+
+    local bufs = mem:bufArray()
+    --local modifierFoo = utils.getPktModifierFunction(modifier, baseIp, wrapIp, baseEth, wrapEth)
+
+
+    local sendBufs = function(bufs, port) 
+        -- allocate buffers from the mem pool and store them in self array
+        bufs:alloc(frameSize)-- - 4)
+
+        for _, buf in ipairs(bufs) do
+            local pkt = buf:getUdpPacket()
+            -- set packet udp port
+            pkt.udp:setDstPort(port)
+            buf:setDelay( delay )
+        end
+        -- send packets
+        bufs:offloadUdpChecksums() --TODO is this needed?
+        return queue:sendWithDelay(bufs)
+    end
+    -- warmup phase to wake up card
+    local timer = timer:new(0.1)
+    while timer:running() do
+        sendBufs(bufs, port - 1)
+    end
+
+    -- benchmark phase    
+    timer:reset(duration)
+    local totalSent = 0
+    while timer:running() do
+        totalSent = totalSent + sendBufs(bufs, port)
+    end
+    return totalSent
+end
+
+
+function throughputLoadSlavePoison(queue, port, frameSize, duration, modifier, bar, rate)
+    --wait for counter slave
+    bar:wait()
+    local delay = (10^12 / 8 / (rate * 10^6)) - (frameSize + 24)
+    if delay < 0 then
+        delay = 0
+    end
+    print( delay )
+    -- gen payload template suggested by RFC2544
+    local udpPayloadLen = frameSize - 46
+    local udpPayload = ffi.new("uint8_t[?]", udpPayloadLen)
+    for i = 0, udpPayloadLen - 1 do
+        udpPayload[i] = bit.band(i, 0xf)
+    end
+
+    local mem = memory.createMemPool(4096, function(buf)
+        local pkt = buf:getUdpPacket()
+        pkt:fill{
+            pktLength = frameSize - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
+            ethSrc = queue, -- get the src mac from the device
+            ethDst = ethDst,
+            -- TODO: too slow with conditional -- eventual launch a second slave for self
+            -- ethDst SHOULD be in 1% of the frames the hardware broadcast address
+            -- for switches ethDst also SHOULD be randomized
+
+            -- if ipDest is dynamical created it is overwritten
+            -- does not affect performance, as self fill is done before any packet is sent
+            ip4Src = "198.18.1.2",
+            ip4Dst = "198.19.1.2",
+            udpSrc = UDP_PORT,
+            -- udpSrc will be set later as it varies
+        }
+        -- fill udp payload with prepared udp payload
+        ffi.copy(pkt.payload, udpPayload, udpPayloadLen)
+    end)
+
+    local bufs = mem:bufArray()
+    --local modifierFoo = utils.getPktModifierFunction(modifier, baseIp, wrapIp, baseEth, wrapEth)
+
+
+    local sendBufs = function(bufs, port) 
+        -- allocate buffers from the mem pool and store them in self array
+        bufs:alloc(frameSize)-- - 4)
+
+        for _, buf in ipairs(bufs) do
+            local pkt = buf:getUdpPacket()
+            -- set packet udp port
+            pkt.udp:setDstPort(port)
+            buf:setDelay(poissonDelay(delay))
+	    
+        end
+        -- send packets
+        bufs:offloadUdpChecksums() --TODO is this needed?
+        return queue:sendWithDelay(bufs)
+    end
+    -- warmup phase to wake up card
+    local timer = timer:new(0.1)
+    while timer:running() do
+        sendBufs(bufs, port - 1)
+    end
+
+    -- benchmark phase    
+    timer:reset(duration)
+    local totalSent = 0
+    while timer:running() do
+        totalSent = totalSent + sendBufs(bufs, port)
+    end
+    return totalSent
+end
+
 function throughputCounterSlave(queue, port, frameSize, duration, bar)
     local bufs = memory.bufArray()
     local stats = {}
@@ -321,48 +495,78 @@ end
 if standalone then
     function configure(parser)
         parser:description("measure throughput.")
-        parser:argument("txport", "Device to transmit to."):default(1):convert(tonumber)
-        parser:argument("rxport", "Device to receive from."):default(1):convert(tonumber)
-        parser:argument("duration", "length of test"):default(10):convert(tonumber)
-        parser:argument("numiterations", "number of iterations"):default(10):convert(tonumber)
+        parser:argument("txport", "Device to transmit to."):default(0):convert(tonumber)
+        parser:argument("rxport", "Device to receive from."):default(0):convert(tonumber)
+        parser:option("-d --duration", "length of test"):default(1):convert(tonumber)
+        parser:option("-n --numiterations", "number of iterations"):default(1):convert(tonumber)
+        parser:option("-r --rths", "<throughput rate threshold>"):default(100):convert(tonumber)
+        parser:option("-m --mlr", "<max throuput loss rate>"):default(0.1):convert(tonumber)
+	parser:option("-f --folder", "folder"):default("testresults")
+	parser:option("-t --ratetype", "rate type (hw,cbr,poison)"):default("cbr")
+	parser:option("-s --fs", "frame sizes e.g;'64 128 ..'"):default("64,128,256,512,1024,1280,1518")
     end
     function master(args)
         local txPort, rxPort = args.txport, args.rxport
         if not txPort or not rxPort then
-            return print("usage: --txport <txport> --rxport <rxport> --duration <duration> --numiterations <numiterations>")
+            return print("usage: --txport <txport> --rxport <rxport>")
         end
         
         local rxDev, txDev
         if txPort == rxPort then
             -- sending and receiving from the same port
-            txDev = device.config({port = txPort, rxQueues = 2, txQueues = 4})
+            txDev = device.config({port = txPort, rxQueues = 2, txQueues = 4, disableOffloads = args.ratetype == "hw"})
             rxDev = txDev
         else
             -- two different ports, different configuration
-            txDev = device.config({port = txPort, rxQueues = 2, txQueues = 4})
+            txDev = device.config({port = txPort, rxQueues = 2, txQueues = 4, disableOffloads = args.ratetype == "hw"})
             rxDev = device.config({port = rxPort, rxQueues = 2, txQueues = 3})
         end
         device.waitForLinks()
         
+	local folderName = args.folder
+	local report = testreport.new(folderName .. "/rfc_2544_testreport.tex")
+	local results = {}
+
+	-- start test
         local bench = benchmark()
         bench:init({
             txQueues = {txDev:getTxQueue(1), txDev:getTxQueue(2), txDev:getTxQueue(3)}, 
             rxQueues = {rxDev:getRxQueue(0)}, 
             duration = args.duration,
             numIterations = args.numiterations,
+	    rateThreshold = args.rths,
+	    maxLossRate = args.mlr,
+	    ratetype = args.ratetype,
             skipConf = true,
         })
         
-        print(bench:getCSVHeader())
-        local results = {}        
-        local FRAME_SIZES   = {64, 128, 256, 512, 1024, 1280, 1518}
-        for _, frameSize in ipairs(FRAME_SIZES) do
-            local result = bench:bench(frameSize)
-            -- save and report results
-            table.insert(results, result)
-            print(bench:resultToCSV(result))
+	local FRAME_SIZES = {}
+	local fram_siz_t = Split(args.fs,",")
+	for index,item in ipairs(fram_siz_t) do
+		FRAME_SIZES[index] = tonumber(item)
         end
-        bench:toTikz("throughput", unpack(results))
+	
+
+	local rates = {}
+	local file = io.open(folderName .. "/throughput.csv", "w")
+	local ratefile = io.open(folderName .. "/rates.txt", "w")
+	log(file, bench:getCSVHeader(), true)
+	for _, frameSize in ipairs(FRAME_SIZES) do
+	    local result, avgRate = bench:bench(frameSize)
+	    rates[frameSize] = avgRate
+            ratefile:write(frameSize .. " : " .. avgRate .. "\n")
+
+	    -- save and report results
+	    table.insert(results, result)
+	    log(file, bench:resultToCSV(result), true)
+	    report:addThroughput(result, args.duration, args.mlr, args.rths)
+	end
+	bench:toTikz(folderName .. "/plot_throughput", unpack(results))
+	file:close()
+	ratefile:close()
+	-- finalize test
+	report:append()
+
     end
 end
 

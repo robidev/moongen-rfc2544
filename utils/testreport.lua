@@ -202,7 +202,6 @@ end
 function mod:finalize()
     local texFile = io.open(self.filename, "w")
     texFile:write(texHdr)
-    
     self:writeGeneralInfo(texFile)    
     
     if #self.throughput > 0 then
@@ -221,6 +220,40 @@ function mod:finalize()
         self:writeBackToBack(texFile)        
     end
     texFile:write("\\end{document}")
+    texFile:close()
+end
+
+function mod:start()
+    local texFile = io.open(self.filename, "w+") --clear file if exists
+    texFile:write(texHdr)
+    self:writeGeneralInfo(texFile)    
+    texFile:close()
+end
+
+function mod:finish()
+    local texFile = io.open(self.filename, "a")
+    texFile:write("\\end{document}")
+    texFile:close()
+end
+
+function mod:append()
+    local texFile = io.open(self.filename, "a") 
+    
+    if #self.throughput > 0 then
+        self:writeThroughput(texFile)
+    end
+    
+    if #self.latency > 0 then
+        self:writeLatency(texFile)        
+    end
+    
+    if #self.frameloss > 0 then
+        self:writeFrameloss(texFile)        
+    end
+    
+    if #self.btb > 0 then
+        self:writeBackToBack(texFile)        
+    end
     texFile:close()
 end
 
