@@ -13,7 +13,7 @@ TESTER_IP="10.0.0.2"
 TESTER_INTERFACE_DPDK="07:00.1"
 
 #settings for device under test (DUT)
-DUT_NAME="SEAPATH"
+DUT_NAME="KERNEL"
 DUT_OS="votp"
 DUT_HOST="10.0.0.3"
 DUT_SSH_KEY_FILE="./dut_key.priv"

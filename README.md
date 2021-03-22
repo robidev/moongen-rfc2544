@@ -3,19 +3,39 @@
 # Prerequisites #
 
 ## LaTex for report generation:
-`$ sudo apt install texlive texlive-latex-extra`
+`$ sudo apt install texlive texlive-latex-extra`  
 
 ## MoonGen 
-`$ git clone https://github.com/emmericp/MoonGen.git`
-(used version: 525d991, on Aug 9, 2020, https://github.com/emmericp/MoonGen/commit/525d9917c98a4760db72bb733cf6ad30550d6669)
-`$ cd MoonGen`
-`$ ./build`
+
+### Dependencies
+
+* gcc >= 4.8
+* make
+* cmake
+* libnuma-dev
+* kernel headers (for the DPDK igb-uio driver)
+* lspci (for `dpdk-devbind.py`)
+* [additional dependencies](https://github.com/libmoon/libmoon/blob/master/install-mlx.md) for Mellanox NICs
+
+Run the following command to install these on Debian/Ubuntu:  
+
+```
+$ sudo apt-get install -y build-essential cmake linux-headers-`uname -r` pciutils libnuma-dev
+```
+
+
+### Installing
+
+`$ git clone https://github.com/emmericp/MoonGen.git`  
+(used version: 525d991, on Aug 9, 2020, https://github.com/emmericp/MoonGen/commit/525d9917c98a4760db72bb733cf6ad30550d6669)  
+`$ cd MoonGen`  
+`$ ./build.sh`  
 
 
 # Network card support #
 
-list of DPDK supported intel chipsets:
-http://core.dpdk.org/supported/nics/intel/
+list of DPDK supported intel chipsets:  
+http://core.dpdk.org/supported/nics/intel/  
 
 
 ## Network requirement of system running test
@@ -51,15 +71,23 @@ Part of the tests use DPDK technology on the DUT, so those will need to have a N
 
 # Configuring tests #
 
-Modify the config items in; ...
-The test takes about xx time. use xx to shorten this
+Modify the config items in; CONFIG.sh  
+The test takes about xx time. use xx to shorten this  
 
 
 # Running tests #
 
-To initialize the NIC and dpdk on the tester
+To initialize the NIC and dpdk on the tester  
 `sudo ./run_tests.sh setup`
 
-To run the actual test and generate the report
-`sudo ./run_tests.sh`
+To run the actual test and generate the report  
+`sudo ./run_tests.sh run`
+The test-report will be in the main folder where the script was run.
+An additional folder is created with all testresult artifacts.
+
+If something goes wrong during test execution, you can restart the current test run with  
+`sudo ./run_tests.sh retry`  
+This will load CONFIG.run, that contains all settings, and keeps track what test executed succesfully.
+After a succesful test run, the file will be renamed to CONFIG.log and placed in the testresult folder along all other artifacts.
+
 
