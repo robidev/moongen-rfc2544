@@ -2,12 +2,9 @@
 
 # Prerequisites #
 
-## LaTex for report generation:
-`$ sudo apt install texlive texlive-latex-extra`  
-
 ## MoonGen 
 
-### Dependencies
+### Dependencies of MoonGen
 
 * gcc >= 4.8
 * make
@@ -24,13 +21,22 @@ $ sudo apt-get install -y build-essential cmake linux-headers-`uname -r` pciutil
 ```
 
 
-### Installing
+### Installing MoonGen
 
-`$ git clone https://github.com/emmericp/MoonGen.git`  
+`~$ git clone https://github.com/emmericp/MoonGen.git`  
 (used version: 525d991, on Aug 9, 2020, https://github.com/emmericp/MoonGen/commit/525d9917c98a4760db72bb733cf6ad30550d6669)  
-`$ cd MoonGen`  
+`~$ cd MoonGen`  
 `$ ./build.sh`  
 
+## The testBench
+
+### LaTex for report generation:
+`$ sudo apt install texlive texlive-latex-extra`  
+
+### The repo itself
+For easy set-up, ensure you are in the parent folder, of where MoonGen resides. i.e. if you installed MoonGen in ~/MoonGen then you should be in ~/
+`~$ git clone https://github.com/robidev/moongen-rfc2544.git`  
+`~$ cd rfc2544`
 
 # Network card support #
 
