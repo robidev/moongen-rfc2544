@@ -112,13 +112,38 @@ function benchmark:toTikz(filename, ...)
             local j = math.floor((k - min) / binWidth) + 1
             bins[j] = bins[j] + v
         end
+
+        local prevYhist = -1
+        local prevYcdf = -1
+        local prevHistWritten = true -- true to ensure first sample is skipped
+	local prevCdfWritten = true -- true to ensure first sample is skipped
         
         local sum = 0
         for k, v in ipairs(bins) do
             local x = (k-1) * binWidth + min
-            histo:addPoint(x / 1000, v / numSamples * 100)
+
+            if (v / numSamples * 100) ~= prevYhist then--only store a change
+                if prevHistWritten == false then --skip first sample, and already written samples
+                    histo:addPoint((x - binWidth) / 1000, prevYhist)--and then also store previous sample
+                end
+                histo:addPoint(x / 1000, v / numSamples * 100)
+		prevHistWritten = true
+            else
+		prevHistWritten = false
+            end
+	    prevYhist = v / numSamples * 100
+
             sum = sum + v
-            cdf:addPoint(x / 1000, sum / numSamples)
+            if sum / numSamples ~= prevYcdf then --only store a change
+                if prevCdfWritten == false then --skip first sample and already written samples
+		    cdf:addPoint((x - binWidth) / 1000, prevYcdf) --and then also store previous sample
+                end
+                cdf:addPoint(x / 1000, sum / numSamples)
+		prevCdfWritten = true
+            else
+		prevCdfWritten = false
+            end
+            prevYcdf = sum / numSamples
         end            
         
         histo:finalize()
