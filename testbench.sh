@@ -149,18 +149,32 @@ echo ""
 
 # Start the latex file with DUT description
 if [[ -z "$TEST_START" ]]; then
+    echo ""
+    echo "-- Creating tex file --"
+    echo ""
     $MOONGEN ./benchmarks/start.lua $DUT_NAME $DUT_OS -f $FOLDER_NAME
     if [ $? -ne 0 ]; then
         echo "ERROR: MoonGen script not executed succesfully"
         exit 1
     else
+	chmod 777 $FOLDER_NAME ## convenience so we are allowed to delete it as normal user
         echo 'TEST_START="y"' >> "$CURRENT_DIR/CONFIG.run"
     fi
 fi
 
 # run tests
 if [[ -n "$TEST_THROUGHPUT" ]]; then
-    $MOONGEN ./benchmarks/throughput.lua $TXPORT $RXPORT -d $TEST_THROUGHPUT_DURATION -n $TEST_THROUGHPUT_NUM_ITERATIONS -r $TEST_THROUGHPUT_RTHS -m $TEST_THROUGHPUT_MLR -f $FOLDER_NAME -t $USE_RATE_TYPE -s $FRAME_SIZES
+    echo ""
+    echo "-- Starting throughput test --"
+    echo ""
+    $MOONGEN ./benchmarks/throughput.lua $TXPORT $RXPORT \
+                                         -d $TEST_THROUGHPUT_DURATION \
+                                         -n $TEST_THROUGHPUT_NUM_ITERATIONS \
+                                         -r $TEST_THROUGHPUT_RTHS \
+                                         -m $TEST_THROUGHPUT_MLR \
+                                         -f $FOLDER_NAME \
+                                         -t $USE_RATE_TYPE \
+                                         -s $FRAME_SIZES
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
 	exit 1
@@ -170,7 +184,16 @@ if [[ -n "$TEST_THROUGHPUT" ]]; then
 fi
 
 if [[ -n "$TEST_LATENCY" ]]; then
-    $MOONGEN ./benchmarks/latency.lua $TXPORT $RXPORT -d $TEST_LATENCY_DURATION -r $TEST_LATENCY_RT -f $FOLDER_NAME $TEST_LATENCY_RT_OVERRIDE
+    echo ""
+    echo "-- Starting latency test --"
+    echo ""
+    $MOONGEN ./benchmarks/latency.lua $TXPORT $RXPORT \
+                                         -d $TEST_LATENCY_DURATION \
+                                         -r $TEST_LATENCY_RT \
+                                         -f $FOLDER_NAME \
+                                         $TEST_LATENCY_RT_OVERRIDE \
+                                         -s $FRAME_SIZES
+
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
 	exit 1
@@ -180,7 +203,14 @@ if [[ -n "$TEST_LATENCY" ]]; then
 fi
 
 if [[ -n "$TEST_FRAMELOSS" ]]; then
-    $MOONGEN ./benchmarks/frameloss.lua $TXPORT $RXPORT -d $TEST_FRAMELOSS_DURATION -g $TEST_FRAMELOSS_GRANULARITY -f $FOLDER_NAME 
+    echo ""
+    echo "-- Starting frameloss test --"
+    echo ""
+    $MOONGEN ./benchmarks/frameloss.lua $TXPORT $RXPORT \
+                                         -d $TEST_FRAMELOSS_DURATION \
+                                         -g $TEST_FRAMELOSS_GRANULARITY \
+                                         -f $FOLDER_NAME \
+                                         -s $FRAME_SIZES
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
 	exit 1
@@ -190,12 +220,20 @@ if [[ -n "$TEST_FRAMELOSS" ]]; then
 fi
 
 if [[ -n "$TEST_BACKTOBACK" ]]; then
-    $MOONGEN ./benchmarks/backtoback.lua $TXPORT $RXPORT -d $TEST_BACKTOBACK_DURATION -n $TEST_BACKTOBACK_NUM_ITERATIONS -b $TEST_BACKTOBACK_BTHS -f $FOLDER_NAME
+    echo ""
+    echo "-- Starting backtoback test --"
+    echo ""
+    $MOONGEN ./benchmarks/backtoback.lua $TXPORT $RXPORT \
+                                         -d $TEST_BACKTOBACK_DURATION \
+                                         -n $TEST_BACKTOBACK_NUM_ITERATIONS \
+                                         -b $TEST_BACKTOBACK_BTHS \
+                                         -f $FOLDER_NAME \
+                                         -s $FRAME_SIZES
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
 	exit 1
     else
-        echo "unset TEST_FRAMELOSS" >> "$CURRENT_DIR/CONFIG.run"
+        echo "unset TEST_BACKTOBACK" >> "$CURRENT_DIR/CONFIG.run"
     fi
 fi
 
@@ -204,6 +242,9 @@ fi
 # finalize latex file
 #
 if [[ -z "$TEST_FINISH" ]]; then
+    echo ""
+    echo "-- Finalizing tex file --"
+    echo ""
     $MOONGEN ./benchmarks/finish.lua -f $FOLDER_NAME
     if [ $? -ne 0 ]; then
         echo "ERROR: MoonGen script not executed succesfully"
@@ -214,18 +255,24 @@ if [[ -z "$TEST_FINISH" ]]; then
 fi
 
 #
-# generate pdf from latex file
+# generate report from latex file
 #
 if [[ -n "$GENERATE_REPORT" ]]; then
+    echo ""
+    echo "-- Generating report file --"
+    echo ""
     # generate PDF report from latex file
     shopt -s nullglob
-    for file in $FOLDER_NAME/*.tikz; do pdflatex $file; done
+    for tikzfile in $FOLDER_NAME/*.tikz; do pdflatex --output-directory=$FOLDER_NAME $tikzfile; done
 
     if [[ $GENERATE_REPORT_TYPE == "pdf" ]]; then
-        pdflatex --output-directory=$FOLDER_NAME $FOLDER_NAME/rfc_2544_testreport.tex
+        cd $FOLDER_NAME
+        #pdflatex --output-directory=$FOLDER_NAME $FOLDER_NAME/rfc_2544_testreport.tex
+        pdflatex rfc_2544_testreport.tex
+        cd ..
         if [[ -f "$FOLDER_NAME/rfc_2544_testreport.pdf" ]]; then
             echo "test report copied to: ./rfc_2544_testreport.pdf"
-            mv $FOLDER_NAME/rfc_2544_testreport.pdf ./rfc_2544_testreport.pdf
+            mv $FOLDER_NAME/rfc_2544_testreport.pdf ./rfc_2544_testreport_$DATE.pdf
             echo "unset GENERATE_REPORT" >> "$CURRENT_DIR/CONFIG.run"
         else
             echo "ERROR: test report not generated"
@@ -237,8 +284,8 @@ if [[ -n "$GENERATE_REPORT" ]]; then
         htlatex rfc_2544_testreport.tex
 	cd ..
         if [[ -f "$FOLDER_NAME/rfc_2544_testreport.html" ]]; then
-            echo "test report copied to: ./rfc_2544_testreport.html"
-            mv $FOLDER_NAME/rfc_2544_testreport.html ./rfc_2544_testreport.html
+            echo "test report copied to: ./rfc_2544_testreport_$DATE.html"
+            mv $FOLDER_NAME/rfc_2544_testreport.html ./rfc_2544_testreport_$DATE.html
             echo "unset GENERATE_REPORT" >> "$CURRENT_DIR/CONFIG.run"
         else
             echo "ERROR: test report not generated"

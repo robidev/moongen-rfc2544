@@ -478,7 +478,8 @@ if standalone then
             end
 	    for line in ratefile:lines() do
                 local cols = Split(line,",")
-	        rates_arr[ cols[0] ] = cols[1]
+                --table.insert(rates_arr, cols[0])
+	        rates_arr[ cols[1] ] = cols[2]
 	    end
             ratefile:close()
         else
@@ -488,10 +489,11 @@ if standalone then
 	file = io.open(folderName .. "/latency.csv", "w")
 	log(file, bench:getCSVHeader(), true)
 	for _, frameSize in ipairs(FRAME_SIZES) do
+            local result
             if rates_arr[FRAME_SIZES] ~= nil then
-	        local result = bench:bench(frameSize, rates_arr[FRAME_SIZES] )
+	        result = bench:bench(frameSize, rates_arr[FRAME_SIZES] )
 	    else
-	        local result = bench:bench(frameSize, args.rate )
+	        result = bench:bench(frameSize, args.rate )
             end	
 	    -- save and report results        
 	    table.insert(results, result)
