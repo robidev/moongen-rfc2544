@@ -1,84 +1,118 @@
 #!/bin/bash
-# location of moongen folder
-MOONGEN_PATH="../MoonGen"
-# location of moongen executable
-MOONGEN=$MOONGEN_PATH/build/MoonGen
-# Helper variable for date-stirng
-DATE=$(date +%Y%m%d-%H%M)
+#
+# Test bench for the seapath project
+#
+# This test bench will perform various tests to check the real-time performance of the seapath project
+#
+# 
 
-# name of output folder, using date string
-FOLDER_NAME="testreport_$DATE"
-
-# settings for test device
-TESTER_IP="10.0.0.2"
-TESTER_INTERFACE_DPDK="07:00.1"
-
-#settings for device under test (DUT)
-DUT_NAME="dut2"
-DUT_OS="ubuntu"
-DUT_HOST="10.0.0.3"
-DUT_SSH_KEY_FILE="./dut_key.priv"
-
-DUT_INTERFACE_KERN="enp0s31f6" 	# kernel (ifconfig / ip address show) interface name
-DUT_INTERFACE_DPDK="00:1f.6"   	# dpdk (pci address) interface name
-
-
-## BENCHMARK SETTINGS ##
-
-FRAME_SIZES="128,256,512" #64,1024,1280,1518
-
-# settings regarding the type of rate limiting used. Hardware (hw) Constand Bit Rate (cbr), or more bursty (poison)
-# cbr is most predictable and supported. poison might be more realistic, hardware is most reliable
-# NOTE: use of hardware rate limiting instead of software is only supported by 10GBe controllers such as X540
-# the I210 and I350 do not support hardware rate limiting
-USE_RATE_TYPE="cbr"  #options: hw cbr poison
-# maximum number of cores used by each benchmark
-USE_MAX_CORES=1 #TODO implement option in scripts, currently 1 core used at maximum
-
-
-TXPORT=0 			# Device to transmit to
-RXPORT=0 			# Device to receive from (set to the same device for using 1 NIC)
-
-# Testing that should be inlcuded in this test run
-#TEST_INTERPACKET="y"
-#TEST_INTERPACKET_DURATION=1 	# <single test duration>
-
-# measure maximum troughput
-TEST_THROUGHPUT="y"
-TEST_THROUGHPUT_DURATION=1 	# <single test duration>
-TEST_THROUGHPUT_NUM_ITERATIONS=1 # <amount of test iterations>
-TEST_THROUGHPUT_RTHS=100   	# <throughput rate threshold>
-TEST_THROUGHPUT_MLR=0.1    	# <max throuput loss rate>
-
-# measure link latency at line rate
-TEST_LATENCY="y"
-TEST_LATENCY_DURATION=1 	# <single test duration>
-TEST_LATENCY_RT=1000   		# <throughput rate> TODO: use rate from throughput
-
-# measure frame-loss for each link speed
-TEST_FRAMELOSS="y"
-TEST_FRAMELOSS_DURATION=1 	# <single test duration>
-TEST_FRAMELOSS_GRANULARITY=0.5 	# <1/x steps in test (range: 0-1; where 1 means only 1 step, and 0.1 means 10 steps)>
-
-# measure maximum burst length
-TEST_BACKTOBACK="y"
-TEST_BACKTOBACK_DURATION=1 	# <single test duration>
-TEST_BACKTOBACK_NUM_ITERATIONS=1 # <amount of test iterations>
-TEST_BACKTOBACK_BTHS=5 		# <back-to-back frame threshold>
-
-
-#TEST_IEC61850="y"
-#TEST_IEC61850_DURATION=1 	# <single test duration>
-
-# set to generate report
-GENERATE_REPORT="y"
-
-### CONFIG ENDS HERE ###
-
-if [ "$EUID" -ne 0 ]
-  then echo "Please run this script as root (i.e. sudo $0)"
-  exit
+# we need sudo rights for running moongen
+if [ "$EUID" -ne 0 ]; then
+    echo "Please run this script as root (i.e. sudo $0)"
+    exit 1
 fi
+
+
+#
+# load configuration
+#
+
+# directory the script is in
+CURRENT_DIR=$(dirname "$BASH_SOURCE")
+
+if [[ $1 == "retry" ]]; then
+    # check for config file
+    if [[ -f "$CURRENT_DIR/CONFIG.run" ]]; then
+        source "$CURRENT_DIR/CONFIG.run"
+        # check if config is correctly sourced
+        if [[ -z "$TESTBENCH_CONFIGURED_RUN" ]]; then
+            echo "ERROR: Invalid CONFIG.run in $CURRENT_DIR"
+            exit 1
+        fi
+        echo "Config settings are loaded from $CURRENT_DIR/CONFIG.run"
+        echo "Test run will be continued where previously left off"
+    else
+        echo "ERROR: Could not find CONFIG.run in $CURRENT_DIR"
+        exit 1
+    fi
+else
+    # check for config file
+    if [[ -f "$CURRENT_DIR/CONFIG.sh" ]]; then
+        source "$CURRENT_DIR/CONFIG.sh"
+        # check if config is correctly sourced
+        if [[ -z "$TESTBENCH_CONFIGURED" ]]; then
+            echo "ERROR: Invalid CONFIG.sh in $CURRENT_DIR"
+            exit 1
+        fi
+        echo "Config settings are loaded from $CURRENT_DIR/CONFIG.sh"
+    else
+        echo "ERROR: Could not find CONFIG.sh in $CURRENT_DIR"
+        exit 1
+    fi
+fi
+
+#
+# Setup the test by installing the drivers, binding the interface and allocating hugepages
+#
+
+if [[ $1 == "setup" ]]; then
+    # load dpdk drivers
+    echo "Installing uio driver"
+    modprobe uio
+    if [ $? -ne 0 ]; then
+	echo "ERROR: Installing uio driver"
+	exit 1
+    fi
+
+    echo "Installing igb_uio driver"
+    (lsmod | grep igb_uio > /dev/null) || insmod $MOONGEN_PATH/libmoon/deps/dpdk/x86_64-native-linuxapp-gcc/kmod/igb_uio.ko
+    if [ $? -ne 0 ]; then
+	echo "ERROR: Installing igb_uio driver"
+	exit 1
+    fi
+
+    # setup testing interface
+    echo "Binding interface: $TESTER_INTERFACE_DPDK"
+    $MOONGEN_PATH/libmoon/deps/dpdk/usertools/dpdk-devbind.py -b igb_uio $TESTER_INTERFACE_DPDK
+    if [ $? -ne 0 ]; then
+	echo "ERROR: Binding interface: $TESTER_INTERFACE_DPDK"
+	exit 1
+    fi
+    # setup hugetablefs
+    echo "Setting up hugetlbfs"
+    $MOONGEN_PATH/setup-hugetlbfs.sh
+    if [ $? -ne 0 ]; then
+	echo "ERROR: Setting up hugetlbfs"
+	exit 1
+    fi
+    echo "Setup finished succesful. You can start the test by running $0 run"
+    exit 0
+fi
+
+
+# check for options. prevent the test from running accidentally
+if [[ $1 != "run" ]] && [[ $1 != "retry" ]]; then
+    echo "Invalid, or unrecognised option in: $0 $@"
+    echo ""
+    echo " --- SEAPATH Test Bench ---"
+    echo ""
+    echo "This tool will run a set of test scripts that will test the performance of the"
+    echo "SEAPATH image. It requires 2 ethernet links between the Device Under Test(DUT)"
+    echo "and the tester(this machine). One link is used for control, and the other for "
+    echo "test-traffic. The configuration is in CONFIG.sh"
+    echo ""
+    echo "Valid options are:"
+    echo " $0 setup - setup the test system. only needs to be run once"
+    echo " $0 run   - run the test, using 'CONFIG.sh' file in the same folder"
+    echo " $0 retry - run the test, using 'CONFIG.run' file in the same folder"
+    echo ""
+    exit 0
+fi
+
+
+#
+# The DUT config functions
+#
 
 function config_DUT () { # TODO: TEST IT
     # start program "$1" on DUT
@@ -92,19 +126,36 @@ function unconfig_DUT () { # TODO: TEST IT
     return $? # return result
 }
 
-if [[ $1 == "setup" ]]; then
-    # load dpdk drivers
-    modprobe uio
-    (lsmod | grep igb_uio > /dev/null) || insmod $MOONGEN_PATH/libmoon/deps/dpdk/x86_64-native-linuxapp-gcc/kmod/igb_uio.ko
-    # setup testing interface
-    $MOONGEN_PATH/libmoon/deps/dpdk/usertools/dpdk-devbind.py -b igb_uio $TESTER_INTERFACE_DPDK
-    # setup hugetablefs
-    $MOONGEN_PATH/setup-hugetlbfs.sh
-    exit 0
+echo ""
+echo "-- Starting test --"
+echo ""
+# check if no config.run is loaded, that will be resumed
+if [[ -z "$TESTBENCH_CONFIGURED_RUN" ]]; then
+    cp "$CURRENT_DIR/CONFIG.sh" "$CURRENT_DIR/CONFIG.run"
+    echo "# " 				  >> "$CURRENT_DIR/CONFIG.run"
+    echo "# Executed commands" 		  >> "$CURRENT_DIR/CONFIG.run"
+    echo "# " 				  >> "$CURRENT_DIR/CONFIG.run"
+    echo "TESTBENCH_CONFIGURED_RUN=\"y\"" >> "$CURRENT_DIR/CONFIG.run"
+    echo "DATE=\"$DATE\""                 >> "$CURRENT_DIR/CONFIG.run"
+    echo "FOLDER_NAME=\"$FOLDER_NAME\""   >> "$CURRENT_DIR/CONFIG.run"
+    echo "progress is stored in $CURRENT_DIR/CONFIG.run"
 fi
 
+#
+# The actual tests
+#
+
+
 # Start the latex file with DUT description
-$MOONGEN ./benchmarks/start.lua $DUT_NAME $DUT_OS -f $FOLDER_NAME
+if [[ -z "$TEST_START" ]]; then
+    $MOONGEN ./benchmarks/start.lua $DUT_NAME $DUT_OS -f $FOLDER_NAME
+    if [ $? -ne 0 ]; then
+        echo "ERROR: MoonGen script not executed succesfully"
+        exit 1
+    else
+        echo 'TEST_START="y"' >> "$CURRENT_DIR/CONFIG.run"
+    fi
+fi
 
 # run tests
 if [[ -n "$TEST_THROUGHPUT" ]]; then
@@ -112,6 +163,8 @@ if [[ -n "$TEST_THROUGHPUT" ]]; then
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
 	exit 1
+    else
+        echo "unset TEST_THROUGHPUT" >> "$CURRENT_DIR/CONFIG.run"
     fi
 fi
 
@@ -120,6 +173,8 @@ if [[ -n "$TEST_LATENCY" ]]; then
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
 	exit 1
+    else
+        echo "unset TEST_LATENCY" >> "$CURRENT_DIR/CONFIG.run"
     fi
 fi
 
@@ -128,6 +183,8 @@ if [[ -n "$TEST_FRAMELOSS" ]]; then
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
 	exit 1
+    else
+        echo "unset TEST_FRAMELOSS" >> "$CURRENT_DIR/CONFIG.run"
     fi
 fi
 
@@ -136,12 +193,28 @@ if [[ -n "$TEST_BACKTOBACK" ]]; then
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
 	exit 1
+    else
+        echo "unset TEST_FRAMELOSS" >> "$CURRENT_DIR/CONFIG.run"
     fi
 fi
 
-# finalize latex file
-$MOONGEN ./benchmarks/finish.lua -f $FOLDER_NAME
 
+#
+# finalize latex file
+#
+if [[ -z "$TEST_FINISH" ]]; then
+    $MOONGEN ./benchmarks/finish.lua -f $FOLDER_NAME
+    if [ $? -ne 0 ]; then
+        echo "ERROR: MoonGen script not executed succesfully"
+        exit 1
+    else
+        echo 'TEST_FINISH="y"' >> "$CURRENT_DIR/CONFIG.run"
+    fi
+fi
+
+#
+# generate pdf from latex file
+#
 if [[ -n "$GENERATE_REPORT" ]]; then
     # generate PDF report from latex file
     shopt -s nullglob
@@ -151,9 +224,20 @@ if [[ -n "$GENERATE_REPORT" ]]; then
     if [[ -f "$FOLDER_NAME/rfc_2544_testreport.pdf" ]]; then
         echo "test report copied to: ./rfc_2544_testreport.pdf"
         mv $FOLDER_NAME/rfc_2544_testreport.pdf ./rfc_2544_testreport.pdf
+        echo "unset GENERATE_REPORT" >> "$CURRENT_DIR/CONFIG.run"
     else
         echo "ERROR: test report not generated"
         exit 1
     fi
 fi
+
+# finalizing run
+echo ""
+echo "-- Test run has finished --"
+echo ""
+mv "$CURRENT_DIR/CONFIG.run" "$CURRENT_DIR/$FOLDER_NAME/CONFIG.log"
+echo "config is stored in $CURRENT_DIR/$FOLDER_NAME/CONFIG.log"
+
+
+
 
