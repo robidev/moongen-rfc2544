@@ -84,15 +84,15 @@ The test takes about xx time. use xx to shorten this
 # Running tests #
 
 To initialize the NIC and dpdk on the tester  
-`sudo ./run_tests.sh setup`
+`sudo ./testbench.sh setup`
 
 To run the actual test and generate the report  
-`sudo ./run_tests.sh run`
+`sudo ./testbench.sh run`
 The test-report will be in the main folder where the script was run.
 An additional folder is created with all testresult artifacts.
 
 If something goes wrong during test execution, you can restart the current test run with  
-`sudo ./run_tests.sh retry`  
+`sudo ./testbench.sh retry`  
 This will load CONFIG.run, that contains all settings, and keeps track what test executed succesfully.
 After a succesful test run, the file will be renamed to CONFIG.log and placed in the testresult folder along all other artifacts.
 
