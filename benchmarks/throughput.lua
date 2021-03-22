@@ -554,7 +554,7 @@ if standalone then
 	for _, frameSize in ipairs(FRAME_SIZES) do
 	    local result, avgRate = bench:bench(frameSize)
 	    rates[frameSize] = avgRate
-            ratefile:write(frameSize .. " : " .. avgRate .. "\n")
+            ratefile:write(frameSize .. "," .. avgRate .. "\n")
 
 	    -- save and report results
 	    table.insert(results, result)

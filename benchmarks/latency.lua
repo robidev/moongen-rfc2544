@@ -427,6 +427,7 @@ if standalone then
 	parser:option("-f --folder", "folder"):default("testresults")
 	parser:option("-t --ratetype", "rate type (hw,cbr,poison)"):default("cbr")
 	parser:option("-s --fs", "frame sizes e.g;'64 128 ..'"):default("64,128,256,512,1024,1280,1518")
+	parser:flag("-o --overwrite", "overwrite rates"):default(false)
     end
     function master(args)
         --local args = utils.parseArguments(arg)
@@ -467,11 +468,31 @@ if standalone then
 		FRAME_SIZES[index] = tonumber(item)
         end
 
+
+	local rates_arr = {}
+	if args.overwrite == false then
+            print("using " .. folderName .. "/rates.txt for rate setting")
+	    local ratefile = io.open(folderName .. "/rates.txt", "r")
+            if ratefile == nil then
+                return print("ERROR: could not open ratefile: " .. folderName .. "/rates.txt")
+            end
+	    for line in ratefile:lines() do
+                local cols = Split(line,",")
+	        rates_arr[ cols[0] ] = cols[1]
+	    end
+            ratefile:close()
+        else
+            print("NOT using rates.txt for rate setting")
+        end
+
 	file = io.open(folderName .. "/latency.csv", "w")
 	log(file, bench:getCSVHeader(), true)
 	for _, frameSize in ipairs(FRAME_SIZES) do
-	    local result = bench:bench(frameSize, args.rate )
-		
+            if rates_arr[FRAME_SIZES] ~= nil then
+	        local result = bench:bench(frameSize, rates_arr[FRAME_SIZES] )
+	    else
+	        local result = bench:bench(frameSize, args.rate )
+            end	
 	    -- save and report results        
 	    table.insert(results, result)
 	    log(file, bench:resultToCSV(result), true)

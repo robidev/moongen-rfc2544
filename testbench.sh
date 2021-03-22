@@ -13,13 +13,32 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 
-#
-# load configuration
-#
+# check for options. prevent the test from running accidentally
+if [[ $1 != "setup" ]] && [[ $1 != "run" ]] && [[ $1 != "retry" ]]; then
+    echo "Invalid, or unrecognised option in: $0 $@"
+    echo ""
+    echo " --- SEAPATH Test Bench ---"
+    echo ""
+    echo "This tool will run a set of test scripts that will test the performance of the"
+    echo "SEAPATH image. It requires 2 ethernet links between the Device Under Test(DUT)"
+    echo "and the tester(this machine). One link is used for control, and the other for "
+    echo "test-traffic. The configuration is in CONFIG.sh"
+    echo ""
+    echo "Valid options are:"
+    echo " $0 setup - setup the test system. only needs to be run once"
+    echo " $0 run   - run the test, using 'CONFIG.sh' file in the same folder"
+    echo " $0 retry - run the test, using the active 'CONFIG.run' file"
+    echo ""
+    exit 0
+fi
+
 
 # directory the script is in
 CURRENT_DIR=$(dirname "$BASH_SOURCE")
 
+#
+# load configuration from CONFIG.sh or an active run with CONFIG.run
+#
 if [[ $1 == "retry" ]]; then
     # check for config file
     if [[ -f "$CURRENT_DIR/CONFIG.run" ]]; then
@@ -90,26 +109,6 @@ if [[ $1 == "setup" ]]; then
 fi
 
 
-# check for options. prevent the test from running accidentally
-if [[ $1 != "run" ]] && [[ $1 != "retry" ]]; then
-    echo "Invalid, or unrecognised option in: $0 $@"
-    echo ""
-    echo " --- SEAPATH Test Bench ---"
-    echo ""
-    echo "This tool will run a set of test scripts that will test the performance of the"
-    echo "SEAPATH image. It requires 2 ethernet links between the Device Under Test(DUT)"
-    echo "and the tester(this machine). One link is used for control, and the other for "
-    echo "test-traffic. The configuration is in CONFIG.sh"
-    echo ""
-    echo "Valid options are:"
-    echo " $0 setup - setup the test system. only needs to be run once"
-    echo " $0 run   - run the test, using 'CONFIG.sh' file in the same folder"
-    echo " $0 retry - run the test, using 'CONFIG.run' file in the same folder"
-    echo ""
-    exit 0
-fi
-
-
 #
 # The DUT config functions
 #
@@ -126,25 +125,27 @@ function unconfig_DUT () { # TODO: TEST IT
     return $? # return result
 }
 
-echo ""
-echo "-- Starting test --"
-echo ""
+
 # check if no config.run is loaded, that will be resumed
 if [[ -z "$TESTBENCH_CONFIGURED_RUN" ]]; then
     cp "$CURRENT_DIR/CONFIG.sh" "$CURRENT_DIR/CONFIG.run"
     echo "# " 				  >> "$CURRENT_DIR/CONFIG.run"
-    echo "# Executed commands" 		  >> "$CURRENT_DIR/CONFIG.run"
+    echo "# Progress:"	 		  >> "$CURRENT_DIR/CONFIG.run"
     echo "# " 				  >> "$CURRENT_DIR/CONFIG.run"
     echo "TESTBENCH_CONFIGURED_RUN=\"y\"" >> "$CURRENT_DIR/CONFIG.run"
     echo "DATE=\"$DATE\""                 >> "$CURRENT_DIR/CONFIG.run"
     echo "FOLDER_NAME=\"$FOLDER_NAME\""   >> "$CURRENT_DIR/CONFIG.run"
+
     echo "progress is stored in $CURRENT_DIR/CONFIG.run"
 fi
+
 
 #
 # The actual tests
 #
-
+echo ""
+echo "-- Starting test --"
+echo ""
 
 # Start the latex file with DUT description
 if [[ -z "$TEST_START" ]]; then
@@ -169,7 +170,7 @@ if [[ -n "$TEST_THROUGHPUT" ]]; then
 fi
 
 if [[ -n "$TEST_LATENCY" ]]; then
-    $MOONGEN ./benchmarks/latency.lua $TXPORT $RXPORT -d $TEST_LATENCY_DURATION -r $TEST_LATENCY_RT -f $FOLDER_NAME
+    $MOONGEN ./benchmarks/latency.lua $TXPORT $RXPORT -d $TEST_LATENCY_DURATION -r $TEST_LATENCY_RT -f $FOLDER_NAME $TEST_LATENCY_RT_OVERRIDE
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
 	exit 1
@@ -220,15 +221,33 @@ if [[ -n "$GENERATE_REPORT" ]]; then
     shopt -s nullglob
     for file in $FOLDER_NAME/*.tikz; do pdflatex $file; done
 
-    pdflatex --output-directory=$FOLDER_NAME $FOLDER_NAME/rfc_2544_testreport.tex
-    if [[ -f "$FOLDER_NAME/rfc_2544_testreport.pdf" ]]; then
-        echo "test report copied to: ./rfc_2544_testreport.pdf"
-        mv $FOLDER_NAME/rfc_2544_testreport.pdf ./rfc_2544_testreport.pdf
-        echo "unset GENERATE_REPORT" >> "$CURRENT_DIR/CONFIG.run"
+    if [[ $GENERATE_REPORT_TYPE == "pdf" ]]; then
+        pdflatex --output-directory=$FOLDER_NAME $FOLDER_NAME/rfc_2544_testreport.tex
+        if [[ -f "$FOLDER_NAME/rfc_2544_testreport.pdf" ]]; then
+            echo "test report copied to: ./rfc_2544_testreport.pdf"
+            mv $FOLDER_NAME/rfc_2544_testreport.pdf ./rfc_2544_testreport.pdf
+            echo "unset GENERATE_REPORT" >> "$CURRENT_DIR/CONFIG.run"
+        else
+            echo "ERROR: test report not generated"
+            exit 1
+        fi
+    elif [[ $GENERATE_REPORT_TYPE == "html" ]]; then
+        #pdflatex --output-directory=$FOLDER_NAME $FOLDER_NAME/rfc_2544_testreport.tex
+        cd $FOLDER_NAME
+        htlatex rfc_2544_testreport.tex
+	cd ..
+        if [[ -f "$FOLDER_NAME/rfc_2544_testreport.html" ]]; then
+            echo "test report copied to: ./rfc_2544_testreport.html"
+            mv $FOLDER_NAME/rfc_2544_testreport.html ./rfc_2544_testreport.html
+            echo "unset GENERATE_REPORT" >> "$CURRENT_DIR/CONFIG.run"
+        else
+            echo "ERROR: test report not generated"
+            exit 1
+        fi
     else
-        echo "ERROR: test report not generated"
-        exit 1
+        echo "ERROR: Invalid GENERATE_REPORT_TYPE: $GENERATE_REPORT_TYPE. 'pdf' and 'html' are valid values"
     fi
+
 fi
 
 # finalizing run
