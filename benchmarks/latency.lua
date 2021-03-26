@@ -18,6 +18,7 @@ local hist          = require "histogram"
 local timer         = require "timer"
 local tikz          = require "utils.tikz"
 local testreport    = require "utils.testreport"
+local limiter = require "software-ratecontrol"
 
 function log(file, msg, linebreak)
     print(msg)
@@ -39,8 +40,6 @@ local function Split(str,sep)
    return ret
 end
 
-local UDP_PORT = 42
-
 local benchmark = {}
 benchmark.__index = benchmark
 
@@ -57,18 +56,20 @@ function benchmark:init(arg)
     self.rxQueues = arg.rxQueues
     self.txQueues = arg.txQueues
     
-    self.skipConf = arg.skipConf
     self.dut = arg.dut
 
     self.rateType = arg.ratetype
 
+    self.maxQueues = arg.maxQueues
+    self.rateLimit = arg.rateLimit
+    self.settleTime = arg.settleTime
+
+    self.ip4Src = "198.18.1.2"
+    self.ip4Dst = "198.19.1.2"
+    self.UDP_PORT = 42
+    self.bufArrayCnt = 128 -- 128 packets per send
+
     self.initialized = true
-end
-
-function benchmark:config()
-end
-
-function benchmark:undoConfig()
 end
 
 function benchmark:getCSVHeader()
@@ -159,65 +160,73 @@ function benchmark:bench(frameSize, rate)
         return error("benchmark got invalid frameSize");
     end
 
-    if not self.skipConf then
-        self:config()
-    end
 
     local maxLinkRate = self.txQueues[1].dev:getLinkStatus().speed
     local bar = barrier.new(0,0)
-    local port = UDP_PORT
-    
+    local port = self.UDP_PORT
+
     -- workaround for rate bug
-    local numQueues = rate > (64 * 64) / (84 * 84) * maxLinkRate and rate < maxLinkRate and 3 or 1
+    local numQueues = 1
+
+    if rate > (64 * 64) / (84 * 84) * maxLinkRate and rate < maxLinkRate and self.maxQueues > 1 then
+        if self.maxQueues == 2 then numQueues = 2 end
+	if self.maxQueues > 2 then numQueues = 3 end
+        printf("set queue %i to rate %d", i, rate * frameSize / (frameSize + 20) / numQueues)
+	rate = rate * frameSize / (frameSize + 20) / numQueues
+    end
+    --allow no load tests by setting rate or maxqueues to 0
+    if self.maxQueues == 0 or rate == 0 then
+	numQueues = 0
+	print("INFO: load is disabled")
+    else
+	print("rate: " .. rate)
+    end
+
     bar:reinit(numQueues + 1)
-    if self.rateType == "hw" then
-        if rate < maxLinkRate then
-            -- not maxLinkRate
-            -- eventual multiple slaves
-            -- set rate is payload rate not wire rate
-            for i=1, numQueues do
-                printf("set queue %i to rate %d", i, rate * frameSize / (frameSize + 20) / numQueues)
-                self.txQueues[i]:setRate(rate * frameSize / (frameSize + 20) / numQueues)
-            end
-        else
-            -- maxLinkRate
-	    printf("set queue %i(single) to rate %d", 1, rate)
-            self.txQueues[1]:setRate(rate)
+
+    local rateLimiter = {}
+    local loadSlaves = {}
+    -- traffic generator
+
+    for i=1, numQueues do
+	if self.rateType == "hw" then
+            self.txQueues[i]:setRate(rate)
+            table.insert(loadSlaves, moongen.startTask("latencyLoadSlave", self.txQueues[i], port, frameSize, self.duration, bar,self.settleTime))
+	end
+	if self.rateType == "cbr" then
+	    print("WARNING: ratelimiter uses an extra thread/core.")
+	    local delay_ns = ((frameSize + 20) * 8 ) * (1000 / rate)
+	    print("inter packet delay: " .. delay_ns) 
+	    rateLimiter[i] = limiter:new(self.txQueues[i], "cbr", delay_ns)
+            table.insert(loadSlaves, moongen.startTask("latencyLoadSlaveCBR", self, rateLimiter[i], port, frameSize, self.duration, bar, rate))
+	end
+	if self.rateType == "poison" then
+            table.insert(loadSlaves, moongen.startTask("latencyLoadSlavePoison", self, self.txQueues[i], port, frameSize, self.duration, bar, rate, maxLinkRate, self.settleTime))
+	end
+    end
+    
+    local hist = latencyTimerSlave(self.txQueues[numQueues+1], self.rxQueues[1], port, frameSize, self.duration, bar,self.rateLimit)
+    hist:print()
+
+    if hist.numSamples == 0 then
+	print("ERROR: no packets recieved. Please check NIC connection")
+	os.exit(-1)
+    end
+    
+    local spkts = 0
+    for i, sl in pairs(loadSlaves) do
+        spkts = spkts + sl:wait()
+        if rateLimiter[i] ~= nil then
+	    rateLimiter[i]:stop()
         end
     end
 
-    -- traffic generator
-    local loadSlaves = {}
-    -- traffic generator
-    for i=1, numQueues do
-	if self.rateType == "hw" then
-            table.insert(loadSlaves, moongen.startTask("latencyLoadSlave", self.txQueues[i], port, frameSize, self.duration, mod, bar))
-	end
-	if self.rateType == "cbr" then
-            table.insert(loadSlaves, moongen.startTask("latencyLoadSlaveCBR", self.txQueues[i], port, frameSize, self.duration, mod, bar, rate))
-	end
-	if self.rateType == "poison" then
-            table.insert(loadSlaves, moongen.startTask("latencyLoadSlavePoison", self.txQueues[i], port, frameSize, self.duration, mod, bar, rate))
-	end
-    end
-    
-    local hist = latencyTimerSlave(self.txQueues[numQueues+1], self.rxQueues[1], port, frameSize, self.duration, bar)
-    hist:print()
-    
-    local spkts = 0
-    for _, sl in pairs(loadSlaves) do
-        spkts = spkts + sl:wait()
-    end
-
-    if not self.skipConf then
-        self:undoConfig()
-    end
     hist.frameSize = frameSize
     hist.rate = spkts / 10^6 / self.duration
     return hist
 end
 
-function latencyLoadSlave(queue, port, frameSize, duration, modifier, bar)
+function latencyLoadSlave(self, queue, port, frameSize, duration, bar,settleTime)
     -- gen payload template suggested by RFC2544
     local udpPayloadLen = frameSize - 46
     local udpPayload = ffi.new("uint8_t[?]", udpPayloadLen)
@@ -231,16 +240,16 @@ function latencyLoadSlave(queue, port, frameSize, duration, modifier, bar)
             pktLength = frameSize - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
             ethSrc = queue, -- get the src mac from the device
             ethDst = ethDst,
-            ip4Dst = "198.19.1.2",
-            ip4Src = "198.18.1.2",
-            udpSrc = SRC_PORT,
+            ip4Src = self.ip4Src,
+            ip4Dst = self.ip4Dst,
+            udpSrc = self.UDP_PORT,
+            -- udpSrc will be set later as it varies
         }
         -- fill udp payload with prepared udp payload
         ffi.copy(pkt.payload, udpPayload, udpPayloadLen)
     end)
 
     local bufs = mem:bufArray()
-    --local modifierFoo = utils.getPktModifierFunction(modifier, baseIp, wrapIp, baseEth, wrapEth)
 
     local sendBufs = function(bufs, port) 
         -- allocate buffers from the mem pool and store them in self array
@@ -250,19 +259,16 @@ function latencyLoadSlave(queue, port, frameSize, duration, modifier, bar)
             local pkt = buf:getUdpPacket()
             -- set packet udp port
             pkt.udp:setDstPort(port)
-            -- apply modifier like ip or mac randomisation to packet
---          modifierFoo(pkt)
         end
         -- send packets
         bufs:offloadUdpChecksums()
         return queue:send(bufs)
     end
     -- warmup phase to wake up card
-    local t = timer:new(0.1)
-    while t:running() do
+    local timer = timer:new(settleTime)
+    while timer:running() do
         sendBufs(bufs, port + 1)
     end
-
 
     -- sync with timerSlave
     bar:wait()
@@ -276,14 +282,7 @@ function latencyLoadSlave(queue, port, frameSize, duration, modifier, bar)
     return totalSent
 end
 
-function latencyLoadSlaveCBR(queue, port, frameSize, duration, modifier, bar, rate)
-    --wait for counter slave
-    bar:wait()
-    local delay = (10^12 / 8 / (rate * 10^6)) - (frameSize + 24)
-    if delay < 0 then
-        delay = 0
-    end
-    print( delay )
+function latencyLoadSlaveCBR(self, queue, port, frameSize, duration, bar, rate,settleTime)
     -- gen payload template suggested by RFC2544
     local udpPayloadLen = frameSize - 46
     local udpPayload = ffi.new("uint8_t[?]", udpPayloadLen)
@@ -294,27 +293,19 @@ function latencyLoadSlaveCBR(queue, port, frameSize, duration, modifier, bar, ra
     local mem = memory.createMemPool(4096, function(buf)
         local pkt = buf:getUdpPacket()
         pkt:fill{
-            pktLength = frameSize - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
+            pktLength = frameSize,-- - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
             ethSrc = queue, -- get the src mac from the device
             ethDst = ethDst,
-            -- TODO: too slow with conditional -- eventual launch a second slave for self
-            -- ethDst SHOULD be in 1% of the frames the hardware broadcast address
-            -- for switches ethDst also SHOULD be randomized
-
-            -- if ipDest is dynamical created it is overwritten
-            -- does not affect performance, as self fill is done before any packet is sent
-            ip4Src = "198.18.1.2",
-            ip4Dst = "198.19.1.2",
-            udpSrc = UDP_PORT,
-            -- udpSrc will be set later as it varies
+            ip4Src = self.ip4Src,
+            ip4Dst = self.ip4Dst,
+            udpSrc = self.UDP_PORT,
+            -- udpDst will be set later as it varies
         }
         -- fill udp payload with prepared udp payload
         ffi.copy(pkt.payload, udpPayload, udpPayloadLen)
     end)
 
-    local bufs = mem:bufArray()
-    --local modifierFoo = utils.getPktModifierFunction(modifier, baseIp, wrapIp, baseEth, wrapEth)
-
+    local bufs = mem:bufArray(self.bufArrayCnt)--send one packet
 
     local sendBufs = function(bufs, port) 
         -- allocate buffers from the mem pool and store them in self array
@@ -324,17 +315,20 @@ function latencyLoadSlaveCBR(queue, port, frameSize, duration, modifier, bar, ra
             local pkt = buf:getUdpPacket()
             -- set packet udp port
             pkt.udp:setDstPort(port)
-            buf:setDelay( delay )
         end
         -- send packets
-        bufs:offloadUdpChecksums() --TODO is this needed?
-        return queue:sendWithDelay(bufs)
+        --bufs:offloadUdpChecksums() --TODO is this needed? seems to have no effect
+	queue:sendN(bufs,self.bufArrayCnt) --send x packets
+	return self.bufArrayCnt--x packets send
     end
     -- warmup phase to wake up card
-    local timer = timer:new(0.1)
+    local timer = timer:new(settleTime)
     while timer:running() do
-        sendBufs(bufs, port - 1)
+        sendBufs(bufs, port + 1)
     end
+
+    --wait for counter slave
+    bar:wait()
 
     -- benchmark phase    
     timer:reset(duration)
@@ -346,14 +340,20 @@ function latencyLoadSlaveCBR(queue, port, frameSize, duration, modifier, bar, ra
 end
 
 
-function latencyLoadSlavePoison(queue, port, frameSize, duration, modifier, bar, rate)
-    --wait for counter slave
-    bar:wait()
-    local delay = (10^12 / 8 / (rate * 10^6)) - (frameSize + 24)
+function latencyLoadSlavePoison(self, queue, port, frameSize, duration, bar, rate, maxLinkRate, settleTime)
+    --delay is for poison in bytes (ie 1 is 8ns on 1gb link)
+--(1000000/rate)*8 --(10^12 / 8 / (rate * 10^6)) - (frameSize + 24)
+
+    --delay in bytes per packet=           delay bytes per sec.                   /    packets per second
+    --                                (bits to fill up *    bits/sec ) /byte-sec  /     (bits-rate *   bits/sec) /byte-sec / frame+20          
+    local delay =               (((maxLinkRate - rate)*(10^6 * maxLinkRate)) /8 )  / ( (rate*(10^6 * maxLinkRate)) / 8 / (frameSize + 20) )
+
+    --local rate_mpps = rate / 8 / (frameSize + 24)
+    --local delay = 10^9 / 8 / (rate_mpps * 10^6) - frameSize - 24
     if delay < 0 then
         delay = 0
     end
-    print( delay )
+    print("delay:" .. delay )
     -- gen payload template suggested by RFC2544
     local udpPayloadLen = frameSize - 46
     local udpPayload = ffi.new("uint8_t[?]", udpPayloadLen)
@@ -364,27 +364,19 @@ function latencyLoadSlavePoison(queue, port, frameSize, duration, modifier, bar,
     local mem = memory.createMemPool(4096, function(buf)
         local pkt = buf:getUdpPacket()
         pkt:fill{
-            pktLength = frameSize - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
+            pktLength = frameSize,-- - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
             ethSrc = queue, -- get the src mac from the device
             ethDst = ethDst,
-            -- TODO: too slow with conditional -- eventual launch a second slave for self
-            -- ethDst SHOULD be in 1% of the frames the hardware broadcast address
-            -- for switches ethDst also SHOULD be randomized
-
-            -- if ipDest is dynamical created it is overwritten
-            -- does not affect performance, as self fill is done before any packet is sent
-            ip4Src = "198.18.1.2",
-            ip4Dst = "198.19.1.2",
-            udpSrc = UDP_PORT,
-            -- udpSrc will be set later as it varies
+            ip4Src = self.ip4Src,
+            ip4Dst = self.ip4Dst,
+            udpSrc = self.UDP_PORT,
+            -- udpDst will be set later as it varies
         }
         -- fill udp payload with prepared udp payload
         ffi.copy(pkt.payload, udpPayload, udpPayloadLen)
     end)
 
-    local bufs = mem:bufArray()
-    --local modifierFoo = utils.getPktModifierFunction(modifier, baseIp, wrapIp, baseEth, wrapEth)
-
+    local bufs = mem:bufArray(self.bufArrayCnt)
 
     local sendBufs = function(bufs, port) 
         -- allocate buffers from the mem pool and store them in self array
@@ -394,7 +386,7 @@ function latencyLoadSlavePoison(queue, port, frameSize, duration, modifier, bar,
             local pkt = buf:getUdpPacket()
             -- set packet udp port
             pkt.udp:setDstPort(port)
-            buf:setDelay(poissonDelay(delay))
+            buf:setDelay(delay) -- poissonDelay(delay) for randomized delay
 	    
         end
         -- send packets
@@ -402,10 +394,13 @@ function latencyLoadSlavePoison(queue, port, frameSize, duration, modifier, bar,
         return queue:sendWithDelay(bufs)
     end
     -- warmup phase to wake up card
-    local timer = timer:new(0.1)
+    local timer = timer:new(settleTime)
     while timer:running() do
-        sendBufs(bufs, port - 1)
+        sendBufs(bufs, port + 1)
     end
+
+    --wait for counter slave
+    bar:wait()
 
     -- benchmark phase    
     timer:reset(duration)
@@ -417,14 +412,14 @@ function latencyLoadSlavePoison(queue, port, frameSize, duration, modifier, bar,
 end
 
 
-function latencyTimerSlave(txQueue, rxQueue, port, frameSize, duration, bar)
+function latencyTimerSlave(txQueue, rxQueue, port, frameSize, duration, bar,rateLimit)
     --Timestamped packets must be > 80 bytes (+4crc)
     frameSize = frameSize > 84 and frameSize or 84
         
     rxQueue:filterL2Timestamps(rxQueue)
     local timestamper = ts:newTimestamper(txQueue, rxQueue)
     local hist = hist:new()
-    local rateLimit = timer:new(0.001)
+    local rateLimit = timer:new(rateLimit)
 
     -- sync with load slave and wait additional few milliseconds to ensure 
     -- the traffic generator has started
@@ -449,6 +444,9 @@ if standalone then
         parser:argument("rxport", "Device to receive from."):default(0):convert(tonumber)
         parser:option("-d --duration", "length of test"):default(1):convert(tonumber)
         parser:option("-r --rate", "Transmit rate in Mbit/s."):default(10000):convert(tonumber)
+       parser:option("-q --maxQueues", "<max load queues>"):default(1):convert(tonumber)
+        parser:option("-x --rateLimit", "<time to wait between latency measures>"):default(0.001):convert(tonumber)
+        parser:option("-k --settleTime", "time to warm up>"):default(0.1):convert(tonumber)
 	parser:option("-f --folder", "folder"):default("testresults")
 	parser:option("-t --ratetype", "rate type (hw,cbr,poison)"):default("cbr")
 	parser:option("-s --fs", "frame sizes e.g;'64 128 ..'"):default("64,128,256,512,1024,1280,1518")
@@ -476,7 +474,7 @@ if standalone then
 	local folderName = args.folder
 	local report = testreport.new(folderName .. "/rfc_2544_testreport.tex")
 	local results = {}
-
+	
 	-- start test        
 	local bench = benchmark()
         bench:init({
@@ -484,7 +482,11 @@ if standalone then
             rxQueues = {rxDev:getRxQueue(2)}, 
             duration = args.duration,
 	    ratetype = args.ratetype,
-            skipConf = true,
+
+	    maxQueues = args.maxQueues,
+	    settleTime = args.settleTime,
+	    rateLimit = args.rateLimit,
+
         })
         
         local FRAME_SIZES = {}
@@ -504,26 +506,28 @@ if standalone then
 	    for line in ratefile:lines() do
                 local cols = Split(line,",")
                 --table.insert(rates_arr, cols[0])
-	        rates_arr[ cols[1] ] = cols[2]
+	        rates_arr[ tonumber(cols[1]) ] = tonumber(cols[2])
 	    end
             ratefile:close()
         else
             print("NOT using rates.txt for rate setting")
         end
-
+	
 	file = io.open(folderName .. "/latency.csv", "w")
 	log(file, bench:getCSVHeader(), true)
 	for _, frameSize in ipairs(FRAME_SIZES) do
             local result
-            if rates_arr[FRAME_SIZES] ~= nil then
-	        result = bench:bench(frameSize, rates_arr[FRAME_SIZES] )
-	    else
-	        result = bench:bench(frameSize, args.rate )
+	    local rate = args.rate
+            if rates_arr[frameSize] ~= nil then
+		-- calulate mbit rate from mega-packets-per-second(mpps)
+		print("rate mpps: " .. rates_arr[frameSize])
+		rate = rates_arr[frameSize] * (frameSize + 20) * 8
             end	
+            result = bench:bench(frameSize, rate )
 	    -- save and report results        
 	    table.insert(results, result)
 	    log(file, bench:resultToCSV(result), true)
-	    report:addLatency(result, args.duration)
+	    report:addLatency(result, args.duration) -- TODO: add stdeviation in report
 	end
 	bench:toTikz(folderName .. "/plot_latency", unpack(results))
 	file:close()

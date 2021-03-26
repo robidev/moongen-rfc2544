@@ -144,7 +144,7 @@ function mod:writeLatency(file)
     file:write(tex)
     file:write(vspaceTex)
     file:write("\\begin{longtabu} to \\textwidth {X[-1,r,m]X[-1,r,m]X[-1,r,m]X[-1,r,m]X[-1,r,m]X[4,r,m]} \\hline\n")
-    file:write("Frame Size (bytes) & Throughput (Mpps) & Latency Min ($\\mu$s)& Latency Avg ($\\mu$s)& Latency Max ($\\mu$s)& \\\\ \\hline\n")
+    file:write("Frame Size (bytes) & Throughput (Mpps) & Latency Min (ns)& Latency Avg (ns)& Latency Max (ns)& \\\\ \\hline\n")
     for _, p in ipairs(self.latency) do
         local histo = p.v
         histo:calc()

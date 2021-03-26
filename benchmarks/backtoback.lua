@@ -19,6 +19,7 @@ local namespaces    = require "namespaces"
 local utils         = require "utils.utils"
 local tikz          = require "utils.tikz"
 local testreport    = require "utils.testreport"
+local limiter = require "software-ratecontrol"
 
 function log(file, msg, linebreak)
     print(msg)
@@ -40,8 +41,6 @@ local function Split(str,sep)
    return ret
 end
 
-local UDP_PORT = 42
-
 local benchmark = {}
 benchmark.__index = benchmark
 
@@ -60,18 +59,16 @@ function benchmark:init(arg)
     self.rxQueues = arg.rxQueues
     self.txQueues = arg.txQueues
     
-    self.skipConf = arg.skipConf
     self.dut = arg.dut
 
     self.rateType = arg.ratetype
+
+    self.ip4Src = "198.18.1.2"
+    self.ip4Dst = "198.19.1.2"
+    self.UDP_PORT = 42
+    self.bufArrayCnt = 128 -- 128 packets per send
     
     self.initialized = true
-end
-
-function benchmark:config()
-end
-
-function benchmark:undoConfig()
 end
 
 function benchmark:getCSVHeader()
@@ -146,32 +143,41 @@ function benchmark:bench(frameSize)
         return error("benchmark got invalid frameSize");
     end
     
-    if not self.skipConf then
-        self:config()
-    end
-    
-    local port = UDP_PORT
+    local port = self.UDP_PORT
     local bar = barrier.new(2,2)
     local results = {frameSize = frameSize}
     
     
     for iteration=1, self.numIterations do
         printf("starting iteration %d for frame size %d", iteration, frameSize)
-        
+        local rateLimiter
         local loadSlave
 	if self.rateType == "hw" then
-		loadSlave = moongen.startTask("backtobackLoadSlave", self.txQueues[1], frameSize, nil, bar, self.granularity, self.duration)
+	    loadSlave = moongen.startTask("backtobackLoadSlave", self.txQueues[1], frameSize, bar, self.granularity, self.duration)
 	end
 	if self.rateType == "cbr" then
-		loadSlave = moongen.startTask("backtobackLoadSlaveCBR", self.txQueues[1], frameSize, nil, bar, self.granularity, self.duration)
+	    print("WARNING: ratelimiter uses an extra thread/core.")
+	    local delay_ns = ((frameSize + 20) * 8 ) * (1000/10) --fixed at 10 mbit
+	    print("inter packet delay: " .. delay_ns) 
+	    rateLimiter = limiter:new(self.txQueues[1], "cbr", delay_ns)
+	    loadSlave = moongen.startTask("backtobackLoadSlaveCBR", self, self.txQueues[1], rateLimiter, frameSize, bar, self.granularity, self.duration)
 	end
 	if self.rateType == "poison" then
-		loadSlave = moongen.startTask("backtobackLoadSlavePoison", self.txQueues[1], frameSize, nil, bar, self.granularity, self.duration)
+	    loadSlave = moongen.startTask("backtobackLoadSlavePoison", self, self.txQueues[1], frameSize, bar, self.granularity, self.duration)
 	end
-        local counterSlave = moongen.startTask("backtobackCounterSlave", self.rxQueues[1], frameSize, bar, self.granularity, self.duration)
+        local counterSlave = moongen.startTask("backtobackCounterSlave", self, self.rxQueues[1], frameSize, bar, self.granularity, self.duration)
         
         local longestS = loadSlave:wait()
         local longestR = counterSlave:wait()
+
+	if rateLimiter ~= nil then
+	    rateLimiter:stop()
+	end
+
+	if longestR == 0 then
+	    print("ERROR: no packets recieved. Please check NIC connection")
+	    os.exit(-1)
+	end
         
         if longest ~= loadSlave:wait() then
             printf("WARNING: loadSlave and counterSlave reported different burst sizes (sender=%d, receiver=%d)", longestS, longestR)
@@ -180,10 +186,8 @@ function benchmark:bench(frameSize)
             results[iteration] = longestS
             printf("iteration %d: longest burst: %d", iteration, longestS)
         end
-    end
-    
-    if not self.skipConf then
-        self:undoConfig()
+
+	moongen.sleepMillis(2000)
     end
     
     return results
@@ -191,7 +195,7 @@ end
 
 local rsns = namespaces.get()
 
-function sendBurst(numPkts, mem, queue, size, port, modFoo)
+function sendBurst(numPkts, mem, queue, size, port)
     local sent = 0
     local bufs = mem:bufArray(64)
     local stop = numPkts - (numPkts % 64)
@@ -218,7 +222,7 @@ function sendBurst(numPkts, mem, queue, size, port, modFoo)
     return sent    
 end
 
-function sendBurstDelayCBR(numPkts, mem, queue, size, port, modFoo, delay)
+function sendBurstDelayCBR(numPkts, mem, queue, size, port)
     local sent = 0
     local bufs = mem:bufArray(64)
     local stop = numPkts - (numPkts % 64)
@@ -227,10 +231,11 @@ function sendBurstDelayCBR(numPkts, mem, queue, size, port, modFoo, delay)
         for _, buf in ipairs(bufs) do
             local pkt = buf:getUdpPacket()
             pkt.udp:setDstPort(port)
-	    buf:setDelay( delay )
+	    --buf:setDelay( delay )
         end
-        bufs:offloadUdpChecksums()
-        sent = sent + queue:sendWithDelay(bufs)
+        --bufs:offloadUdpChecksums()
+	queue:send(bufs)
+        sent = sent + 64
         
     end
     if numPkts ~= stop then
@@ -239,15 +244,16 @@ function sendBurstDelayCBR(numPkts, mem, queue, size, port, modFoo, delay)
         for _, buf in ipairs(bufs) do
             local pkt = buf:getUdpPacket()
             pkt.udp:setDstPort(port)
-            buf:setDelay( delay )
+            --buf:setDelay( delay )
         end
-        bufs:offloadUdpChecksums()
-        sent = sent + queue:sendWithDelay(bufs)
+        --bufs:offloadUdpChecksums()
+	queue:send(bufs)
+        sent = sent + (numPkts % 64)
     end
     return sent    
 end
 
-function sendBurstDelayPoison(numPkts, mem, queue, size, port, modFoo, delay)
+function sendBurstDelayPoison(numPkts, mem, queue, size, port, delay)
     local sent = 0
     local bufs = mem:bufArray(64)
     local stop = numPkts - (numPkts % 64)
@@ -268,7 +274,7 @@ function sendBurstDelayPoison(numPkts, mem, queue, size, port, modFoo, delay)
         for _, buf in ipairs(bufs) do
             local pkt = buf:getUdpPacket()
             pkt.udp:setDstPort(port)
-            buf:setDelay( poissonDelay(delay) )
+            buf:setDelay( delay) --poissonDelay(delay) )
         end
         bufs:offloadUdpChecksums()
         sent = sent + queue:sendWithDelay(bufs)
@@ -276,7 +282,7 @@ function sendBurstDelayPoison(numPkts, mem, queue, size, port, modFoo, delay)
     return sent    
 end
 
-function backtobackLoadSlave(queue, frameSize, modifier, bar, granularity, duration) 
+function backtobackLoadSlave(self, queue, frameSize, bar, granularity, duration) 
     -- gen payload template suggested by RFC2544
     local udpPayloadLen = frameSize - 46
     local udpPayload = ffi.new("uint8_t[?]", udpPayloadLen)
@@ -290,10 +296,9 @@ function backtobackLoadSlave(queue, frameSize, modifier, bar, granularity, durat
             pktLength = frameSize - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
             ethSrc = queue, -- get the src mac from the device
             ethDst = ethDst,
-            -- does not affect performance, as self fill is done before any packet is sent
-            ip4Src = "198.18.1.2",
-            ip4Dst = "198.19.1.2",
-            udpSrc = UDP_PORT,
+            ip4Src = self.ip4Src,
+            ip4Dst = self.ip4Dst,
+            udpSrc = self.UDP_PORT,
             -- udpSrc will be set later as it varies
         }
         -- fill udp payload with prepared udp payload
@@ -333,7 +338,7 @@ function backtobackLoadSlave(queue, frameSize, modifier, bar, granularity, durat
         bar:reinit(2)
         
         -- do a binary search
-        -- throw away firt try
+        -- throw away first try
         if first then
            first = false 
         else
@@ -353,13 +358,7 @@ function backtobackLoadSlave(queue, frameSize, modifier, bar, granularity, durat
     return longest
 end
 
-function backtobackLoadSlaveCBR(queue, frameSize, modifier, bar, granularity, duration) 
-
-    --10 mbit delay
-    local delay = (10^12 / 8 / (10 * 10^6)) - (frameSize + 24)
-    if delay < 0 then
-        delay = 0
-    end
+function backtobackLoadSlaveCBR(self, queue, rateLimiter, frameSize, bar, granularity, duration) 
     -- gen payload template suggested by RFC2544
     local udpPayloadLen = frameSize - 46
     local udpPayload = ffi.new("uint8_t[?]", udpPayloadLen)
@@ -367,17 +366,16 @@ function backtobackLoadSlaveCBR(queue, frameSize, modifier, bar, granularity, du
         udpPayload[i] = bit.band(i, 0xf)
     end
     
-    local mem = memory.createMemPool(function(buf)
+    local mem = memory.createMemPool(4096, function(buf)
         local pkt = buf:getUdpPacket()
         pkt:fill{
-            pktLength = frameSize - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
+            pktLength = frameSize,-- - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
             ethSrc = queue, -- get the src mac from the device
             ethDst = ethDst,
-            -- does not affect performance, as self fill is done before any packet is sent
-            ip4Src = "198.18.1.2",
-            ip4Dst = "198.19.1.2",
-            udpSrc = UDP_PORT,
-            -- udpSrc will be set later as it varies
+            ip4Src = self.ip4Src,
+            ip4Dst = self.ip4Dst,
+            udpSrc = self.UDP_PORT,
+            -- udpDst will be set later as it varies
         }
         -- fill udp payload with prepared udp payload
         ffi.copy(pkt.payload, udpPayload, udpPayloadLen)
@@ -402,11 +400,11 @@ function backtobackLoadSlaveCBR(queue, frameSize, modifier, bar, granularity, du
 
 	-- set rate 10 mbit
         while t:running() do
-            sendBurstDelayCBR(64, mem, queue, frameSize - 4, UDP_PORT+1, delay)
+            sendBurstDelayCBR(64, mem, rateLimiter, frameSize - 4, self.UDP_PORT+1)
         end
         -- set rate link speed
 
-        local sent = sendBurst(count, mem, queue, frameSize - 4, UDP_PORT)
+        local sent = sendBurst(count, mem, queue, frameSize - 4, self.UDP_PORT)
         
         rsns.sent = sent
         
@@ -417,7 +415,7 @@ function backtobackLoadSlaveCBR(queue, frameSize, modifier, bar, granularity, du
         bar:reinit(2)
         
         -- do a binary search
-        -- throw away firt try
+        -- throw away first try
         if first then
            first = false 
         else
@@ -437,7 +435,7 @@ function backtobackLoadSlaveCBR(queue, frameSize, modifier, bar, granularity, du
     return longest
 end
 
-function backtobackLoadSlavePoison(queue, frameSize, modifier, bar, granularity, duration) 
+function backtobackLoadSlavePoison(self,queue, frameSize, bar, granularity, duration) 
     -- gen payload template suggested by RFC2544
     --10 mbit delay
     local delay = (10^12 / 8 / (10 * 10^6)) - (frameSize + 24)
@@ -451,17 +449,16 @@ function backtobackLoadSlavePoison(queue, frameSize, modifier, bar, granularity,
         udpPayload[i] = bit.band(i, 0xf)
     end
     
-    local mem = memory.createMemPool(4096,function(buf)
+    local mem = memory.createMemPool(4096, function(buf)
         local pkt = buf:getUdpPacket()
         pkt:fill{
-            pktLength = frameSize - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
+            pktLength = frameSize,-- - 4, -- self sets all length headers fields in all used protocols, -4 for FCS
             ethSrc = queue, -- get the src mac from the device
             ethDst = ethDst,
-            -- does not affect performance, as self fill is done before any packet is sent
-            ip4Src = "198.18.1.2",
-            ip4Dst = "198.19.1.2",
-            udpSrc = UDP_PORT,
-            -- udpSrc will be set later as it varies
+            ip4Src = self.ip4Src,
+            ip4Dst = self.ip4Dst,
+            udpSrc = self.UDP_PORT,
+            -- udpDst will be set later as it varies
         }
         -- fill udp payload with prepared udp payload
         ffi.copy(pkt.payload, udpPayload, udpPayloadLen)
@@ -486,10 +483,10 @@ function backtobackLoadSlavePoison(queue, frameSize, modifier, bar, granularity,
 
 	--10 mbit rate
         while t:running() do
-            sendBurstDelayPoison(64, mem, queue, frameSize - 4, UDP_PORT+1, delay)
+            sendBurstDelayPoison(64, mem, queue, frameSize - 4, self.UDP_PORT+1, delay)
         end
 	--line speed rate
-        local sent = sendBurst(count, mem, queue, frameSize - 4, UDP_PORT)
+        local sent = sendBurst(count, mem, queue, frameSize - 4, self.UDP_PORT)
         rsns.sent = sent
         
         bar:wait()
@@ -499,7 +496,7 @@ function backtobackLoadSlavePoison(queue, frameSize, modifier, bar, granularity,
         bar:reinit(2)
         
         -- do a binary search
-        -- throw away firt try
+        -- throw away first try
         if first then
            first = false 
         else
@@ -520,7 +517,7 @@ function backtobackLoadSlavePoison(queue, frameSize, modifier, bar, granularity,
 end
 
 
-function backtobackCounterSlave(queue, frameSize, bar, granularity, duration)
+function backtobackCounterSlave(self, queue, frameSize, bar, granularity, duration)
     
     local bufs = memory.bufArray() 
     
@@ -548,7 +545,7 @@ function backtobackCounterSlave(queue, frameSize, bar, granularity, duration)
             for i = 1, rx do
                 local buf = bufs[i]
                 local pkt = buf:getUdpPacket()
-                if pkt.udp:getDstPort() == UDP_PORT then
+                if pkt.udp:getDstPort() == self.UDP_PORT then
                     counter = counter + 1
                 end
             end

@@ -22,11 +22,11 @@ if [[ $1 != "setup" ]] && [[ $1 != "run" ]] && [[ $1 != "retry" ]]; then
     echo "This tool will run a set of test scripts that will test the performance of the"
     echo "SEAPATH image. It requires 2 ethernet links between the Device Under Test(DUT)"
     echo "and the tester(this machine). One link is used for control, and the other for "
-    echo "test-traffic. The configuration is in CONFIG.sh"
+    echo "test-traffic. The configuration is in CONFIG"
     echo ""
     echo "Valid options are:"
     echo " $0 setup - setup the test system. only needs to be run once"
-    echo " $0 run   - run the test, using 'CONFIG.sh' file in the same folder"
+    echo " $0 run   - run the test, using 'CONFIG' file in the same folder"
     echo " $0 retry - run the test, using the active 'CONFIG.run' file"
     echo ""
     exit 0
@@ -56,16 +56,16 @@ if [[ $1 == "retry" ]]; then
     fi
 else
     # check for config file
-    if [[ -f "$CURRENT_DIR/CONFIG.sh" ]]; then
-        source "$CURRENT_DIR/CONFIG.sh"
+    if [[ -f "$CURRENT_DIR/CONFIG" ]]; then
+        source "$CURRENT_DIR/CONFIG"
         # check if config is correctly sourced
         if [[ -z "$TESTBENCH_CONFIGURED" ]]; then
-            echo "ERROR: Invalid CONFIG.sh in $CURRENT_DIR"
+            echo "ERROR: Invalid CONFIG in $CURRENT_DIR"
             exit 1
         fi
-        echo "Config settings are loaded from $CURRENT_DIR/CONFIG.sh"
+        echo "Config settings are loaded from $CURRENT_DIR/CONFIG"
     else
-        echo "ERROR: Could not find CONFIG.sh in $CURRENT_DIR"
+        echo "ERROR: Could not find CONFIG in $CURRENT_DIR"
         exit 1
     fi
 fi
@@ -128,7 +128,7 @@ function unconfig_DUT () { # TODO: TEST IT
 
 # check if no config.run is loaded, that will be resumed
 if [[ -z "$TESTBENCH_CONFIGURED_RUN" ]]; then
-    cp "$CURRENT_DIR/CONFIG.sh" "$CURRENT_DIR/CONFIG.run"
+    cp "$CURRENT_DIR/CONFIG" "$CURRENT_DIR/CONFIG.run"
     echo "# " 				  >> "$CURRENT_DIR/CONFIG.run"
     echo "# Progress:"	 		  >> "$CURRENT_DIR/CONFIG.run"
     echo "# " 				  >> "$CURRENT_DIR/CONFIG.run"
@@ -172,6 +172,9 @@ if [[ -n "$TEST_THROUGHPUT" ]]; then
                                          -n $TEST_THROUGHPUT_NUM_ITERATIONS \
                                          -r $TEST_THROUGHPUT_RTHS \
                                          -m $TEST_THROUGHPUT_MLR \
+					 -q $TEST_THROUGHPUT_MAXQUEUES \
+					 -w $TEST_THROUGHPUT_RESETTIME \
+					 -k $TEST_THROUGHPUT_SETTLETIME \
                                          -f $FOLDER_NAME \
                                          -t $USE_RATE_TYPE \
                                          -s $FRAME_SIZES
@@ -190,8 +193,12 @@ if [[ -n "$TEST_LATENCY" ]]; then
     $MOONGEN ./benchmarks/latency.lua $TXPORT $RXPORT \
                                          -d $TEST_LATENCY_DURATION \
                                          -r $TEST_LATENCY_RT \
+					 -q $TEST_LATENCY_MAXQUEUES \
+					 -x $TEST_LATENCY_RATELIMIT \
+					 -k $TEST_LATENCY_SETTLETIME \
                                          -f $FOLDER_NAME \
                                          $TEST_LATENCY_RT_OVERRIDE \
+                                         -t $USE_RATE_TYPE \
                                          -s $FRAME_SIZES
 
     if [ $? -ne 0 ]; then
@@ -209,7 +216,10 @@ if [[ -n "$TEST_FRAMELOSS" ]]; then
     $MOONGEN ./benchmarks/frameloss.lua $TXPORT $RXPORT \
                                          -d $TEST_FRAMELOSS_DURATION \
                                          -g $TEST_FRAMELOSS_GRANULARITY \
+					 -q $TEST_FRAMELOSS_MAXQUEUES \
+					 -k $TEST_FRAMELOSS_SETTLETIME \
                                          -f $FOLDER_NAME \
+                                         -t $USE_RATE_TYPE \
                                          -s $FRAME_SIZES
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
@@ -266,10 +276,12 @@ if [[ -n "$GENERATE_REPORT" ]]; then
     for tikzfile in $FOLDER_NAME/*.tikz; do pdflatex --output-directory=$FOLDER_NAME $tikzfile; done
 
     if [[ $GENERATE_REPORT_TYPE == "pdf" ]]; then
-        cd $FOLDER_NAME
-        #pdflatex --output-directory=$FOLDER_NAME $FOLDER_NAME/rfc_2544_testreport.tex
-        pdflatex rfc_2544_testreport.tex
-        cd ..
+        #run in subshell
+        ( 
+            cd $FOLDER_NAME
+            #pdflatex --output-directory=$FOLDER_NAME $FOLDER_NAME/rfc_2544_testreport.tex
+            pdflatex rfc_2544_testreport.tex
+	)
         if [[ -f "$FOLDER_NAME/rfc_2544_testreport.pdf" ]]; then
             echo "test report copied to: ./rfc_2544_testreport.pdf"
             mv $FOLDER_NAME/rfc_2544_testreport.pdf ./rfc_2544_testreport_$DATE.pdf
