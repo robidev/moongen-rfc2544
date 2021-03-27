@@ -61,7 +61,6 @@ function benchmark:init(arg)
     self.rateType = arg.ratetype
 
     self.maxQueues = arg.maxQueues
-    self.rateLimit = arg.rateLimit
     self.settleTime = arg.settleTime
 
     self.ip4Src = "198.18.1.2"
@@ -73,7 +72,7 @@ function benchmark:init(arg)
 end
 
 function benchmark:getCSVHeader()
-    return "latency,packet,frame size,rate,duration"
+    return "inter-arrival-time,packet,frame size,rate,duration"
 end
 
 function benchmark:resultToCSV(result)
@@ -89,13 +88,13 @@ function benchmark:resultToCSV(result)
 end
 
 function benchmark:toTikz(filename, ...)
-    local cdf = tikz.new(filename .. "_cdf" .. ".tikz", [[xlabel={latency [$\mu$s]}, ylabel={CDF}, grid=both, ymin=0, ymax=1, mark repeat=100, scaled ticks=false, no markers, width=9cm, height=4cm,cycle list name=exotic]])
+    local cdf = tikz.new(filename .. "_cdf" .. ".tikz", [[xlabel={inter-arrival-time [$\mu$s]}, ylabel={CDF}, grid=both, ymin=0, ymax=1, mark repeat=100, scaled ticks=false, no markers, width=9cm, height=4cm,cycle list name=exotic]])
     
     local numResults = select("#", ...)
     for i=1, numResults do
         local result = select(i, ...)
-        local histo = tikz.new(filename .. "_histo" .. "_" .. result.frameSize .. ".tikz", [[xlabel={latency [$\mu$s]}, ylabel={probability [\%]}, grid=both, ybar interval, ymin=0, xtick={}, scaled ticks=false, tick label style={/pgf/number format/fixed}, x tick label as interval=false, width=9cm, height=4cm ]])
-        histo:startPlot([[orange, fill=orange]])
+        local histo = tikz.new(filename .. "_histo" .. "_" .. result.frameSize .. ".tikz", [[xlabel={inter-arrival-time [$\mu$s]}, ylabel={probability [\%]}, grid=both, ybar interval, ymin=0, xtick={}, scaled ticks=false, tick label style={/pgf/number format/fixed}, x tick label as interval=false, width=9cm, height=4cm ]])
+        histo:startPlot([[orange, fill=blue]])
         cdf:startPlot()
         
         result:calc()
@@ -106,11 +105,16 @@ function benchmark:toTikz(filename, ...)
         local numBins = math.ceil((max - min) / binWidth) + 1
     
         local bins = {}
+        if numBins ~= numBins then --if numBins is nan, it is not equal to itself, force it 1
+            numBins = 1
+	end
         for j=1, numBins do
             bins[j] = 0
         end
+
         for k, v in pairs(result.histo) do
             local j = math.floor((k - min) / binWidth) + 1
+            if j ~= j then j = 1 end --if j is nan, it is not equal to itself, force it 1
             bins[j] = bins[j] + v
         end
 
@@ -161,7 +165,7 @@ function benchmark:bench(frameSize, rate)
     end
 
 
-    local maxLinkRate = self.txQueues[1].dev:getLinkStatus().speed
+    local maxLinkRate = self.rxQueues[1].dev:getLinkStatus().speed
     local bar = barrier.new(0,0)
     local port = self.UDP_PORT
 
@@ -186,26 +190,28 @@ function benchmark:bench(frameSize, rate)
 
     local rateLimiter = {}
     local loadSlaves = {}
-    -- traffic generator
 
+    -- traffic generator
     for i=1, numQueues do
 	if self.rateType == "hw" then
             self.txQueues[i]:setRate(rate)
-            table.insert(loadSlaves, moongen.startTask("latencyLoadSlave", self.txQueues[i], port, frameSize, self.duration, bar,self.settleTime))
+            table.insert(loadSlaves, moongen.startTask("InterArrivalTimeLoadSlave", self.txQueues[i], port, frameSize, self.duration, bar,self.settleTime))
 	end
 	if self.rateType == "cbr" then
 	    print("WARNING: ratelimiter uses an extra thread/core.")
 	    local delay_ns = ((frameSize + 20) * 8 ) * (1000 / rate)
 	    print("inter packet delay: " .. delay_ns) 
 	    rateLimiter[i] = limiter:new(self.txQueues[i], "cbr", delay_ns)
-            table.insert(loadSlaves, moongen.startTask("latencyLoadSlaveCBR", self, rateLimiter[i], port, frameSize, self.duration, bar, rate))
+            table.insert(loadSlaves, moongen.startTask("InterArrivalTimeLoadSlaveCBR", self, rateLimiter[i], port, frameSize, self.duration, bar, rate))
 	end
 	if self.rateType == "poison" then
-            table.insert(loadSlaves, moongen.startTask("latencyLoadSlavePoison", self, self.txQueues[i], port, frameSize, self.duration, bar, rate, maxLinkRate, self.settleTime))
+            table.insert(loadSlaves, moongen.startTask("InterArrivalTimeLoadSlavePoison", self, self.txQueues[i], port, frameSize, self.duration, bar, rate, maxLinkRate, self.settleTime))
 	end
     end
     
-    local hist = latencyTimerSlave(self.txQueues[numQueues+1], self.rxQueues[1], port, frameSize, self.duration, bar,self.rateLimit)
+    --local timerTask = moongen.startTask("InterArrivalTimeTimerSlave", self.rxQueues[1], self.duration, bar)
+    --local hist = timerTask:wait()
+    local hist = InterArrivalTimeTimerSlave(self.rxQueues[1], self.duration, bar)
     hist:print()
 
     if hist.numSamples == 0 then
@@ -226,7 +232,7 @@ function benchmark:bench(frameSize, rate)
     return hist
 end
 
-function latencyLoadSlave(self, queue, port, frameSize, duration, bar,settleTime)
+function InterArrivalTimeLoadSlave(self, queue, port, frameSize, duration, bar,settleTime)
     -- gen payload template suggested by RFC2544
     local udpPayloadLen = frameSize - 46
     local udpPayload = ffi.new("uint8_t[?]", udpPayloadLen)
@@ -282,7 +288,7 @@ function latencyLoadSlave(self, queue, port, frameSize, duration, bar,settleTime
     return totalSent
 end
 
-function latencyLoadSlaveCBR(self, queue, port, frameSize, duration, bar, rate,settleTime)
+function InterArrivalTimeLoadSlaveCBR(self, queue, port, frameSize, duration, bar, rate,settleTime)
     -- gen payload template suggested by RFC2544
     local udpPayloadLen = frameSize - 46
     local udpPayload = ffi.new("uint8_t[?]", udpPayloadLen)
@@ -340,7 +346,7 @@ function latencyLoadSlaveCBR(self, queue, port, frameSize, duration, bar, rate,s
 end
 
 
-function latencyLoadSlavePoison(self, queue, port, frameSize, duration, bar, rate, maxLinkRate, settleTime)
+function InterArrivalTimeLoadSlavePoison(self, queue, port, frameSize, duration, bar, rate, maxLinkRate, settleTime)
     --delay is for poison in bytes (ie 1 is 8ns on 1gb link)
 --(1000000/rate)*8 --(10^12 / 8 / (rate * 10^6)) - (frameSize + 24)
 
@@ -412,40 +418,59 @@ function latencyLoadSlavePoison(self, queue, port, frameSize, duration, bar, rat
 end
 
 
-function latencyTimerSlave(txQueue, rxQueue, port, frameSize, duration, bar,rateLimit)
-    --Timestamped packets must be > 80 bytes (+4crc)
-    frameSize = frameSize > 84 and frameSize or 84
-        
-    rxQueue:filterL2Timestamps(rxQueue)
-    local timestamper = ts:newTimestamper(txQueue, rxQueue)
-    local hist = hist:new()
-    local rateLimit = timer:new(rateLimit)
+function InterArrivalTimeTimerSlave(queue, duration, bar)
+    queue:enableTimestampsAllPackets()
+    local bufs = memory.createBufArray()
+    local times = {}
+    local total = 0
+    local hist = hist:create()
 
-    -- sync with load slave and wait additional few milliseconds to ensure 
-    -- the traffic generator has started
     bar:wait()
     moongen.sleepMillis(1000)
-    
-    local t = timer:new(duration)
-    while t:running() do
-        hist:update(timestamper:measureLatency(frameSize - 4, function(buf)
-        end))
-        rateLimit:wait()
-        rateLimit:reset()
+
+    --drain the queue
+    print("draining the queue")
+    local drainQueue = timer:new(0.5)
+    while drainQueue:running() do
+	local rx = queue:tryRecv(bufs, 1000)
+	bufs:free(rx)
     end
+
+    local timer = timer:new(duration + 3)
+    local count = 0
+    local lastTimestamp = nil
+    print("starting the measurement")
+    while timer:running() do
+	local n = queue:tryRecv(bufs, 1000)
+	for i = 1, n do
+	    count = count + 1
+	    local timestamp = bufs[i]:getTimestamp()
+	    if timestamp then
+		-- timestamp sometimes jumps by ~3 seconds on ixgbe (in less than a few milliseconds wall-clock time)
+		if lastTimestamp then --and timestamp - lastTimestamp < 10^9 then
+		    hist:update(timestamp - lastTimestamp)
+		end
+		lastTimestamp = timestamp
+	    end
+	end
+	bufs:free(n)
+    end
+
+    print("total received: " .. count )
     return hist
 end
+
+
 
 --for standalone benchmark
 if standalone then
     function configure(parser)
-        parser:description("measure latencies.")
+        parser:description("measure inter-arrival-time.")
         parser:argument("txport", "Device to transmit to."):default(0):convert(tonumber)
         parser:argument("rxport", "Device to receive from."):default(0):convert(tonumber)
         parser:option("-d --duration", "length of test"):default(1):convert(tonumber)
         parser:option("-r --rate", "Transmit rate in Mbit/s."):default(10000):convert(tonumber)
        parser:option("-q --maxQueues", "<max load queues>"):default(1):convert(tonumber)
-        parser:option("-x --rateLimit", "<time to wait between latency measures>"):default(0.001):convert(tonumber)
         parser:option("-k --settleTime", "time to warm up>"):default(0.1):convert(tonumber)
 	parser:option("-f --folder", "folder"):default("testresults")
 	parser:option("-t --ratetype", "rate type (hw,cbr,poison)"):default("cbr")
@@ -484,13 +509,12 @@ if standalone then
 	local bench = benchmark()
         bench:init({
             txQueues = {txDev:getTxQueue(1), txDev:getTxQueue(2), txDev:getTxQueue(3), txDev:getTxQueue(4)}, 
-            rxQueues = {rxDev:getRxQueue(2)}, 
+            rxQueues = {rxDev:getRxQueue(0)}, 
             duration = args.duration,
 	    ratetype = args.ratetype,
 
 	    maxQueues = args.maxQueues,
 	    settleTime = args.settleTime,
-	    rateLimit = args.rateLimit,
 
         })
         
@@ -515,10 +539,11 @@ if standalone then
 	    end
             ratefile:close()
         else
-            print("NOT using rates.txt for rate setting")
+            print("NOT using rates.txt for rate setting, framesizes ignored")
+	    FRAME_SIZES = { 128 } -- only one framesize needed if running under no load
         end
 	
-	file = io.open(folderName .. "/latency.csv", "w")
+	file = io.open(folderName .. "/inter-arrival-time.csv", "w")
 	log(file, bench:getCSVHeader(), true)
 	for _, frameSize in ipairs(FRAME_SIZES) do
             local result
@@ -532,9 +557,9 @@ if standalone then
 	    -- save and report results        
 	    table.insert(results, result)
 	    log(file, bench:resultToCSV(result), true)
-	    report:addLatency(result, args.duration) -- TODO: add stdeviation in report
+	    report:addInterArrivalTime(result, args.duration) -- TODO: add stdeviation in report
 	end
-	bench:toTikz(folderName .. "/plot_latency", unpack(results))
+	bench:toTikz(folderName .. "/plot_inter-arrival-time", unpack(results))
 	file:close()
 	-- finalize test
 	report:append()

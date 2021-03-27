@@ -453,14 +453,19 @@ if standalone then
             return print("usage: --txport <txport> --rxport <rxport> --duration <duration> --granularity <granularity>")
         end
         
+        local disableOffloads = false
+	if args.ratetype ~= "posion" then --if posion is not the type, disable the offloads
+	    disableOffloads = true
+	end
+
         local rxDev, txDev
         if txPort == rxPort then
             -- sending and receiving from the same port
-            txDev = device.config({port = txPort, rxQueues = 2, txQueues = 4})
+            txDev = device.config({port = txPort, rxQueues = 2, txQueues = 4, disableOffloads })
             rxDev = txDev
         else
             -- two different ports, different configuration
-            txDev = device.config({port = txPort, rxQueues = 2, txQueues = 4})
+            txDev = device.config({port = txPort, rxQueues = 2, txQueues = 4, disableOffloads })
             rxDev = device.config({port = rxPort, rxQueues = 2, txQueues = 3})
         end
         device.waitForLinks()

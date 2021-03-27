@@ -62,17 +62,29 @@ Rate: & ##RATE## \\
 \end{tabu}
 ]]
 
+local interArrivalTimeInfoTex = [[
+\subsection{Packet inter arrival time}\begin{tabu} to \textwidth{lX}
+Test Duration: & ##DURATION## \\
+\end{tabu}
+]]
+
 function mod.new(filename)    
     local self = setmetatable({}, mod)
     
     self.filename = filename
     
+    self.InterArrivalTime = {}
     self.throughput = {}
     self.latency = {}
     self.frameloss = {}
     self.btb = {}
     
     return self
+end
+
+function mod:addInterArrivalTime(result, duration)
+    self.InterArrivalTime.duration = duration
+    table.insert(self.InterArrivalTime, {k = result.frameSize, v = result})
 end
 
 function mod:addThroughput(result, duration, mlr, accuracy)
@@ -154,6 +166,26 @@ function mod:writeLatency(file)
     file:write("\\hline\n\\end{longtabu}\n\\newpage\n")
 end
 
+function mod:writeInterArrivalTime(file)
+    local tex = interArrivalTimeInfoTex
+    tex = tex:gsub("##DURATION##", string.format("%d s", self.InterArrivalTime.duration))
+    file:write(tex)
+    file:write(vspaceTex)
+    file:write("\\begin{longtabu} to \\textwidth {X[-1,r,m]X[-1,r,m]X[-1,r,m]X[-1,r,m]X[-1,r,m]X[4,r,m]} \\hline\n")
+    file:write("Frame Size (bytes) & Throughput (Mpps) & Interval Min (ns)& Interval Avg (ns)& Interval Max (ns)& \\\\ \\hline\n")
+    for _, p in ipairs(self.InterArrivalTime) do
+        local histo = p.v
+        histo:calc()
+        local n = #histo.sortedHisto
+	if histo.rate == 0 then
+            file:write(string.format("%s & %s & %.1f & %.1f & %.1f & \\includegraphics[width=\\linewidth]{plot_inter-arrival-time_histo_%d} \\\\\n", "N/A", "N/A", histo.sortedHisto[1].k, histo.avg, histo.sortedHisto[n].k ,p.k))
+	else
+            file:write(string.format("%d & %.3f & %.1f & %.1f & %.1f & \\includegraphics[width=\\linewidth]{plot_inter-arrival-time_histo_%d} \\\\\n", p.k, histo.rate, histo.sortedHisto[1].k, histo.avg, histo.sortedHisto[n].k ,p.k))
+	end
+    end
+    file:write("\\hline\n\\end{longtabu}\n\\newpage\n")
+end
+
 function mod:writeFrameloss(file)
     local tex = framelossInfoTex
     tex = tex:gsub("##DURATION##", string.format("%d s", self.frameloss.duration))
@@ -219,6 +251,11 @@ function mod:finalize()
     if #self.btb > 0 then
         self:writeBackToBack(texFile)        
     end
+
+    if #self.InterArrivalTime > 0 then
+        self.writeInterArrivalTime(texFile)
+    end
+
     texFile:write("\\end{document}")
     texFile:close()
 end
@@ -254,6 +291,11 @@ function mod:append()
     if #self.btb > 0 then
         self:writeBackToBack(texFile)        
     end
+
+    if #self.InterArrivalTime > 0 then
+        self:writeInterArrivalTime(texFile)
+    end
+
     texFile:close()
 end
 

@@ -247,7 +247,27 @@ if [[ -n "$TEST_BACKTOBACK" ]]; then
     fi
 fi
 
+if [[ -n "$TEST_INTER_ARRIVAL_TIME" ]]; then
+    echo ""
+    echo "-- Starting inter-arrival-times test --"
+    echo ""
+    $MOONGEN ./benchmarks/inter-arrival-times.lua $TXPORT $RXPORT \
+                                         -d $TEST_INTER_ARRIVAL_TIME_DURATION \
+                                         -r $TEST_INTER_ARRIVAL_TIME_RT \
+					 -q $TEST_INTER_ARRIVAL_TIME_MAXQUEUES \
+					 -k $TEST_INTER_ARRIVAL_TIME_SETTLETIME \
+                                         -f $FOLDER_NAME \
+                                         $TEST_INTER_ARRIVAL_TIME_OVERRIDE \
+                                         -t $USE_RATE_TYPE \
+                                         -s $FRAME_SIZES
 
+    if [ $? -ne 0 ]; then
+	echo "ERROR: MoonGen script not executed succesfully"
+	exit 1
+    else
+        echo "unset TEST_INTER_ARRIVAL" >> "$CURRENT_DIR/CONFIG.run"
+    fi
+fi
 #
 # finalize latex file
 #
