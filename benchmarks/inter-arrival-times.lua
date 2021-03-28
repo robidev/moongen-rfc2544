@@ -19,6 +19,7 @@ local timer         = require "timer"
 local tikz          = require "utils.tikz"
 local testreport    = require "utils.testreport"
 local limiter = require "software-ratecontrol"
+local pipe = require "pipe"
 
 function log(file, msg, linebreak)
     print(msg)
@@ -67,6 +68,9 @@ function benchmark:init(arg)
     self.ip4Dst = "198.19.1.2"
     self.UDP_PORT = 42
     self.bufArrayCnt = 128 -- 128 packets per send
+
+    self.etype = hton16(0x88BA) --smv 9-2 ethertype filter
+    --self.etype = hton16(0x88B8) --GOOSE ethertype filter
 
     self.initialized = true
 end
@@ -211,7 +215,8 @@ function benchmark:bench(frameSize, rate)
     
     --local timerTask = moongen.startTask("InterArrivalTimeTimerSlave", self.rxQueues[1], self.duration, bar)
     --local hist = timerTask:wait()
-    local hist = InterArrivalTimeTimerSlave(self.rxQueues[1], self.duration, bar)
+    local hist = InterArrivalTimeTimerSlave(self.rxQueues[1], self.duration, bar, self.etype)
+    --local hist = InterArrivalTimeTimerSlaveSoftwareTimestamp(self.rxQueues[1], self.duration, bar)
     hist:print()
 
     if hist.numSamples == 0 then
@@ -418,8 +423,72 @@ function InterArrivalTimeLoadSlavePoison(self, queue, port, frameSize, duration,
 end
 
 
-function InterArrivalTimeTimerSlave(queue, duration, bar)
+function InterArrivalTimeTimerSlave(queue, duration, bar, etype)
     queue:enableTimestampsAllPackets()
+
+    --queue.dev:l2Filter(0x88BF,queue) --set filter to SMV ethertype seems broken, or is not supported by I350?
+    --queue.dev:l2GenericFilter(0x88B8)
+
+    local bufs = memory.createBufArray()
+    local times = {}
+    local total = 0
+    local hist = hist:create()
+
+    bar:wait()
+    moongen.sleepMillis(1000)
+
+    --drain the queue
+    print("draining the queue")
+    local drainQueue = timer:new(0.5)
+    while drainQueue:running() do
+	local rx = queue:tryRecv(bufs, 1000)
+	bufs:free(rx)
+    end
+    print("etype:" .. etype)
+    local timer = timer:new(duration + 3)
+    local count = 0
+    local lastTimestamp = nil
+    local prevCounter = 0
+    print("starting the measurement")
+    while timer:running() do
+	local n = queue:tryRecv(bufs, 1000)
+	for i = 1, n do
+
+            local pkt = bufs[i]:getEthernetPacket()
+	    --check for sampled value packet ethertype
+            if pkt.payload.uint16[7] == 0xba88 then
+		--check sample counter
+		local counter = bit.bor(bit.lshift(pkt.payload.uint8[39],8), pkt.payload.uint8[40])
+		if ( (prevCounter + 1) % 4000 ) ~= counter then
+		-- we miss a sample, if it is not an imcrement, or wrap around
+		    print(string.format("Expected: %d received: %d", (prevCounter + 1) % 3999, counter ) )
+		end
+                prevCounter = counter
+            end
+
+	    if pkt.payload.uint16[7] == etype then -- TODO: is offset always at 7?
+		    count = count + 1
+		    local timestamp = bufs[i]:getTimestamp()
+		    if timestamp then
+			-- timestamp sometimes jumps by ~3 seconds on ixgbe (in less than a few milliseconds wall-clock time)
+			if lastTimestamp and timestamp - lastTimestamp < 10^9 then
+			    hist:update(timestamp - lastTimestamp)
+			end
+			lastTimestamp = timestamp
+		    end
+	    end
+	end
+	bufs:free(n)
+    end
+
+    print("total received: " .. count )
+    return hist
+end
+
+function InterArrivalTimeTimerSlaveSoftwareTimestamp(queue, duration, bar)
+    --queue.dev:l2Filter(0x88BF,queue) --set filter to SMV ethertype seems broken, or is not supported by I350?
+    --queue.dev:l2GenericFilter(0x88B8)
+    local tscFreq = moongen.getCyclesFrequency()
     local bufs = memory.createBufArray()
     local times = {}
     local total = 0
@@ -441,13 +510,12 @@ function InterArrivalTimeTimerSlave(queue, duration, bar)
     local lastTimestamp = nil
     print("starting the measurement")
     while timer:running() do
-	local n = queue:tryRecv(bufs, 1000)
+	local n = queue:recvWithTimestamps(bufs)
 	for i = 1, n do
 	    count = count + 1
-	    local timestamp = bufs[i]:getTimestamp()
+	    local timestamp = tonumber(bufs[i].udata64) / tscFreq * 10^9 -- to nanoseconds
 	    if timestamp then
-		-- timestamp sometimes jumps by ~3 seconds on ixgbe (in less than a few milliseconds wall-clock time)
-		if lastTimestamp then --and timestamp - lastTimestamp < 10^9 then
+		if lastTimestamp and timestamp - lastTimestamp < 10^9 then
 		    hist:update(timestamp - lastTimestamp)
 		end
 		lastTimestamp = timestamp
@@ -565,6 +633,9 @@ if standalone then
 	report:append()
     end
 end
+
+
+
 
 local mod = {}
 mod.__index = mod
