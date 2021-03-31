@@ -68,6 +68,12 @@ Test Duration: & ##DURATION## \\
 \end{tabu}
 ]]
 
+local SMV92InfoTex = [[
+\subsection{Sampled value processing latency}\begin{tabu} to \textwidth{lX}
+Test SMV92 sample rate: & ##SAMPLES## \\
+\end{tabu}
+]]
+
 function mod.new(filename)    
     local self = setmetatable({}, mod)
     
@@ -78,6 +84,7 @@ function mod.new(filename)
     self.latency = {}
     self.frameloss = {}
     self.btb = {}
+    self.smv92 = {}
     
     return self
 end
@@ -111,6 +118,10 @@ function mod:addBackToBack(result, duration, accuracy, rate)
     table.insert(self.btb, {k = result.frameSize, v = result})
 end
 
+function mod:addSMV92(result, samples_per_sec)
+    self.smv92.samples_per_sec = samples_per_sec
+    table.insert(self.smv92, {k = 1, v = result})
+end
 
 function mod:writeGeneralInfo(file)
     local tex = generalInfoTex
@@ -231,6 +242,22 @@ function mod:writeBackToBack(file)
     file:write(img)
 end
 
+function mod:writeSMV92(file)
+    local tex = SMV92InfoTex
+    tex = tex:gsub("##SAMPLES##", string.format("%d s", self.smv92.samples_per_sec))
+    file:write(tex)
+    file:write(vspaceTex)
+    file:write("\\begin{longtabu} to \\textwidth {X[-1,r,m]X[-1,r,m]X[-1,r,m]X[4,r,m]} \\hline\n")
+    file:write("Latency Min (ns)& Latency Avg (ns)& Latency Max (ns)& \\\\ \\hline\n")
+    for _, p in ipairs(self.smv92) do
+        local histo = p.v
+        histo:calc()
+        local n = #histo.sortedHisto
+	file:write(string.format("%.1f & %.1f & %.1f & \\includegraphics[width=\\linewidth]{plot_SMV92_histo} \\\\\n", histo.sortedHisto[1].k, histo.avg, histo.sortedHisto[n].k))
+    end
+    file:write("\\hline\n\\end{longtabu}\n\\newpage\n")
+end
+
 function mod:finalize()
     local texFile = io.open(self.filename, "w")
     texFile:write(texHdr)
@@ -254,6 +281,10 @@ function mod:finalize()
 
     if #self.InterArrivalTime > 0 then
         self.writeInterArrivalTime(texFile)
+    end
+
+    if #self.smv92 > 0 then
+        self.writeSMV92(texFile)
     end
 
     texFile:write("\\end{document}")
@@ -294,6 +325,10 @@ function mod:append()
 
     if #self.InterArrivalTime > 0 then
         self:writeInterArrivalTime(texFile)
+    end
+
+    if #self.smv92 > 0 then
+        self:writeSMV92(texFile)
     end
 
     texFile:close()

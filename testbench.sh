@@ -268,6 +268,24 @@ if [[ -n "$TEST_INTER_ARRIVAL_TIME" ]]; then
         echo "unset TEST_INTER_ARRIVAL" >> "$CURRENT_DIR/CONFIG.run"
     fi
 fi
+
+if [[ -n "$TEST_IEC61850" ]]; then
+    echo ""
+    echo "-- Starting inter-arrival-times test --"
+    echo ""
+    $MOONGEN ./benchmarks/SMV9-2.lua $TXPORT $RXPORT \
+                                         -d $TEST_IEC61850_DURATION \
+                                         -s $TEST_IEC61850_SAMPLES_SEC \
+					 -m $TEST_IEC61850_MEASUREMENTS \
+                                         -f $FOLDER_NAME
+
+    if [ $? -ne 0 ]; then
+	echo "ERROR: MoonGen script not executed succesfully"
+	exit 1
+    else
+        echo "unset TEST_IEC61850" >> "$CURRENT_DIR/CONFIG.run"
+    fi
+fi
 #
 # finalize latex file
 #
