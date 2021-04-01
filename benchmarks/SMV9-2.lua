@@ -7,7 +7,6 @@ if master == nil then
 end
 
 local moongen       = require "moongen"
-local libmoon 	    = require "libmoon"
 local dpdk          = require "dpdk"
 local memory        = require "memory"
 local device        = require "device"
@@ -20,6 +19,8 @@ local timer         = require "timer"
 local tikz          = require "utils.tikz"
 local testreport    = require "utils.testreport"
 local limiter = require "software-ratecontrol"
+
+local uint64 = ffi.typeof("uint64_t")
 
 local PKT_SIZE	= 134
 local smvPayload = ffi.new("uint8_t[?]", PKT_SIZE, { 
@@ -125,6 +126,7 @@ function benchmark:init(arg)
 
     self.samples_per_sec = arg.samples_per_sec
     self.measurements = arg.measurements
+    self.type = arg.type
 
     self.initialized = true
 end
@@ -232,10 +234,22 @@ function benchmark:bench()
         local rateLimiter
         local loadSlave
 
-        local timerTask = moongen.startTask("GOOSETimerSlave", self.rxQueues[1], self.duration, bar)
+	local timerTask
+
+	if self.type == "hw" then
+            timerTask = moongen.startTask("GOOSETimerSlave", self.rxQueues[1], self.duration, bar)
     
-        -- SMV92 traffic generator
-        loadSlave = moongen.startTask("SMV92LoadSlave", self.txQueues[3], self.duration, self.samples_per_sec, bar)
+            -- SMV92 traffic generator
+            loadSlave = moongen.startTask("SMV92LoadSlave", self.txQueues[3], self.duration, self.samples_per_sec, bar)
+	elseif self.type == "sw" then
+            timerTask = moongen.startTask("GOOSETimerSlaveSw", self.rxQueues[1], self.duration, bar)
+    
+            -- SMV92 traffic generator
+            loadSlave = moongen.startTask("SMV92LoadSlaveSw", self.txQueues[3], self.duration, self.samples_per_sec, bar)
+	else
+	    print("ERROR: invalid type")
+	    os.exit(-1)
+	end
 
         local tx_time = loadSlave:wait()
         if rateLimiter ~= nil then
@@ -251,6 +265,10 @@ function benchmark:bench()
         end
 	if tx_time ~= -1 and rx_time ~= -1 then
 		local latency = rx_time - tx_time
+		if self.type == "sw" then
+		    local tscFreq = moongen.getCyclesFrequency()
+		    latency =latency / tscFreq * 10^9 -- to nanoseconds
+		end
 		print("latency: " .. latency)
 		hist:update(latency)
 	else
@@ -261,12 +279,12 @@ function benchmark:bench()
 	end
     end
 
+    hist:print()
     if hist.numSamples == 0 then
 	print("ERROR: no packets recieved. Please check NIC connection")
 	os.exit(-1)
     end
 
-    hist:print()
     return hist
 end
 
@@ -290,10 +308,10 @@ function SMV92LoadSlave(queue, duration, samples_per_sec, bar)
 	local bufs = mem:bufArray(1) -- prepare 1 buffer per time
 
 	-- calculate 250us increment
-	local time_250us_increment = libmoon.getCyclesFrequency() / samples_per_sec
+	local time_250us_increment = moongen.getCyclesFrequency() / samples_per_sec
 
 	-- set time for start
-	local time_250us = libmoon.getCycles() + libmoon.getCyclesFrequency()
+	local time_250us = moongen.getCycles() + moongen.getCyclesFrequency()
 
 	local trigger = (duration -1) * samples_per_sec -- trigger one second before duration ends
 
@@ -301,7 +319,7 @@ function SMV92LoadSlave(queue, duration, samples_per_sec, bar)
 	local tx_time = -1
 	local counter = 0
 	while runtime:running() do
-		if time_250us < libmoon.getCycles() then
+		if time_250us < moongen.getCycles() then
 			bufs:alloc(PKT_SIZE) -- size of each packet
 			local pkt = bufs[1]:getEthernetPacket()
 			pkt.payload.uint8[33] = smpCnt / 256 --hton16(smpCnt)
@@ -355,6 +373,93 @@ function GOOSETimerSlave(queue, duration, bar)
     return timestamp
 end
 
+function SMV92LoadSlaveSw(queue, duration, samples_per_sec, bar)
+	local tscFreq = moongen.getCyclesFrequency()
+	local mem = memory.createMemPool(function(buf)
+		local pkt = buf:getEthernetPacket()
+		pkt:fill {
+			ethSrc = queue,
+			ethDst = "01:0c:cd:01:00:03",--ethDst,
+			ethType = 0x8100
+		}
+		ffi.copy(pkt.payload, smvPayload, PKT_SIZE)
+	end)
+
+	    -- sync with timerSlave
+        bar:wait()
+
+	print("starting the sw publisher")
+	local runtime = timer:new(duration+3)
+	local bufs = mem:bufArray(1) -- prepare 1 buffer per time
+
+	-- calculate 250us increment
+	local time_250us_increment = moongen.getCyclesFrequency() / samples_per_sec
+
+	-- set time for start
+	local time_250us = moongen.getCycles() + moongen.getCyclesFrequency()
+
+	local trigger = (duration -1) * samples_per_sec -- trigger one second before duration ends
+
+	local smpCnt = 0
+	local tx_time_1 = -1
+	local tx_time_2 = -1
+	local counter = 0
+	while runtime:running() do
+		if time_250us < moongen.getCycles() then
+			bufs:alloc(PKT_SIZE) -- size of each packet
+			local pkt = bufs[1]:getEthernetPacket()
+			pkt.payload.uint8[33] = smpCnt / 256 --hton16(smpCnt)
+			pkt.payload.uint8[34] = smpCnt % 256 --hton16(smpCnt)	
+			smpCnt = (smpCnt + 1) % samples_per_sec
+
+			if counter == trigger then --trigger trip event
+				pkt.payload.uint16[29] = 0xFFFF --smv value to trigger trip event
+				tx_time_1 = moongen.getCycles() 
+				queue:send(bufs)
+				tx_time_2 = moongen.getCycles()
+				break;
+			else
+				pkt.payload.uint16[29] = 0x0000
+				queue:send(bufs)
+			end
+			counter = counter + 1
+			time_250us = time_250us + time_250us_increment
+		end
+	end
+    local tx_time = tx_time_1 + ( ( tx_time_2 - tx_time_1) /2) 
+    print("tx_time: " .. tonumber(tx_time % 0x100000000))
+    return tonumber(tx_time % 0x100000000)
+end
+
+function GOOSETimerSlaveSw(queue, duration, bar)
+    local tscFreq = moongen.getCyclesFrequency()
+    local bufs = memory.createBufArray()
+
+    -- sync with LoadSlave
+    bar:wait()
+    moongen.sleepMillis(1000)
+
+    --queue:enableTimestampsAllPackets()
+    local timer = timer:new(duration + 3)
+    print("starting the sw measurement")
+
+    local timestamp = -1
+    while timer:running() do
+	local n = queue:recvWithTimestamps(bufs)
+	for i = 1, n do
+            local pkt = bufs[i]:getEthernetPacket()
+	    --check for GOOSE value packet ethertype
+
+            if pkt.payload.uint16[-1] == 0xb888 and timestamp == -1 and pkt.payload.uint8[0x7f] == 255 then
+		timestamp = bufs[i].udata64 
+            end
+	    --bufs[i]:dump()
+	end
+	bufs:free(n)
+    end
+    print("rx_time: " .. tonumber(timestamp % 0x100000000) )
+    return tonumber(timestamp % 0x100000000)
+end
 
 
 --for standalone benchmark
@@ -367,6 +472,7 @@ if standalone then
 	parser:option("-d --duration", "duration of each test"):default(2):convert(tonumber)
 	parser:option("-s --samples_per_sec", "samples per second [4000,4800]"):default(4000):convert(tonumber)
 	parser:option("-m --measurements", "amount of measurements done"):default(5):convert(tonumber)
+	parser:option("-t --type", "type of measurements(hw|sw)"):default("hw")
     end
     function master(args)
         --local args = utils.parseArguments(arg)
@@ -404,6 +510,7 @@ if standalone then
             duration = args.duration,
 	    samples_per_sec = args.samples_per_sec,
             measurements = args.measurements,
+	    type = args.type,
         })
 
 	print(folderName)

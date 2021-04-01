@@ -271,12 +271,13 @@ fi
 
 if [[ -n "$TEST_IEC61850" ]]; then
     echo ""
-    echo "-- Starting inter-arrival-times test --"
+    echo "-- Starting SMV 9-2 test --"
     echo ""
     $MOONGEN ./benchmarks/SMV9-2.lua $TXPORT $RXPORT \
                                          -d $TEST_IEC61850_DURATION \
                                          -s $TEST_IEC61850_SAMPLES_SEC \
 					 -m $TEST_IEC61850_MEASUREMENTS \
+					 -t $TEST_IEC61850_TYPE \
                                          -f $FOLDER_NAME
 
     if [ $? -ne 0 ]; then
