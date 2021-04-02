@@ -176,14 +176,14 @@ function benchmark:bench(frameSize, rate)
     -- workaround for rate bug
     local numQueues = 1
 
-    if rate > (64 * 64) / (84 * 84) * maxLinkRate and rate < maxLinkRate and self.maxQueues > 1 then
+    if rate > (64 * 64) / (84 * 84) * maxLinkRate and rate < maxLinkRate and self.maxQueues > 1 and frameSize > 0 then
         if self.maxQueues == 2 then numQueues = 2 end
 	if self.maxQueues > 2 then numQueues = 3 end
         printf("set queue %i to rate %d", i, rate * frameSize / (frameSize + 20) / numQueues)
 	rate = rate * frameSize / (frameSize + 20) / numQueues
     end
     --allow no load tests by setting rate or maxqueues to 0
-    if self.maxQueues == 0 or rate == 0 then
+    if self.maxQueues == 0 or rate == 0 or frameSize == 0 then
 	numQueues = 0
 	print("INFO: load is disabled")
     else
@@ -608,7 +608,7 @@ if standalone then
             ratefile:close()
         else
             print("NOT using rates.txt for rate setting, framesizes ignored")
-	    FRAME_SIZES = { 128 } -- only one framesize needed if running under no load
+	    FRAME_SIZES = { 0 } -- only one framesize needed if running under no load
         end
 	
 	file = io.open(folderName .. "/inter-arrival-time.csv", "w")
@@ -616,7 +616,7 @@ if standalone then
 	for _, frameSize in ipairs(FRAME_SIZES) do
             local result
 	    local rate = args.rate
-            if rates_arr[frameSize] ~= nil then
+            if rates_arr[frameSize] ~= nil and frameSize ~= 0 then
 		-- calulate mbit rate from mega-packets-per-second(mpps)
 		print("rate mpps: " .. rates_arr[frameSize])
 		rate = rates_arr[frameSize] * (frameSize + 20) * 8

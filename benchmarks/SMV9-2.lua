@@ -128,6 +128,9 @@ function benchmark:init(arg)
     self.measurements = arg.measurements
     self.type = arg.type
 
+    self.trigger_index = arg.trigger_index
+    self.burstsize = arg.burstsize
+
     self.initialized = true
 end
 
@@ -240,12 +243,12 @@ function benchmark:bench()
             timerTask = moongen.startTask("GOOSETimerSlave", self.rxQueues[1], self.duration, bar)
     
             -- SMV92 traffic generator
-            loadSlave = moongen.startTask("SMV92LoadSlave", self.txQueues[3], self.duration, self.samples_per_sec, bar)
+            loadSlave = moongen.startTask("SMV92LoadSlave", self.txQueues[3], self.duration, self.samples_per_sec, bar, self.trigger_index ,self.burstsize)
 	elseif self.type == "sw" then
             timerTask = moongen.startTask("GOOSETimerSlaveSw", self.rxQueues[1], self.duration, bar)
     
             -- SMV92 traffic generator
-            loadSlave = moongen.startTask("SMV92LoadSlaveSw", self.txQueues[3], self.duration, self.samples_per_sec, bar)
+            loadSlave = moongen.startTask("SMV92LoadSlaveSw", self.txQueues[3], self.duration, self.samples_per_sec, bar, self.trigger_index ,self.burstsize)
 	else
 	    print("ERROR: invalid type")
 	    os.exit(-1)
@@ -288,13 +291,13 @@ function benchmark:bench()
     return hist
 end
 
-function SMV92LoadSlave(queue, duration, samples_per_sec, bar)
+function SMV92LoadSlave(queue, duration, samples_per_sec, bar, trigger_index, burstsize)
 	queue:enableTimestamps()
-	local mem = memory.createMemPool(function(buf)
+	local mem = memory.createMemPool(4096, function(buf)
 		local pkt = buf:getEthernetPacket()
 		pkt:fill {
 			ethSrc = queue,
-			ethDst = "01:0c:cd:01:00:03",--ethDst,
+			ethDst = "01:0c:cd:01:00:01",--ethDst,
 			ethType = 0x8100
 		}
 		ffi.copy(pkt.payload, smvPayload, PKT_SIZE)
@@ -305,7 +308,7 @@ function SMV92LoadSlave(queue, duration, samples_per_sec, bar)
 
 	print("starting the publisher")
 	local runtime = timer:new(duration+3)
-	local bufs = mem:bufArray(1) -- prepare 1 buffer per time
+	local bufs = mem:bufArray(burstsize) -- prepare x buffers per time 
 
 	-- calculate 250us increment
 	local time_250us_increment = moongen.getCyclesFrequency() / samples_per_sec
@@ -318,22 +321,36 @@ function SMV92LoadSlave(queue, duration, samples_per_sec, bar)
 	local smpCnt = 0
 	local tx_time = -1
 	local counter = 0
+	print("streams: " .. burstsize .. " stream index for trigger:" .. trigger_index)
 	while runtime:running() do
 		if time_250us < moongen.getCycles() then
 			bufs:alloc(PKT_SIZE) -- size of each packet
-			local pkt = bufs[1]:getEthernetPacket()
-			pkt.payload.uint8[33] = smpCnt / 256 --hton16(smpCnt)
-			pkt.payload.uint8[34] = smpCnt % 256 --hton16(smpCnt)	
+			local pkt
+			for i, buf in ipairs(bufs) do
+			    pkt = buf:getEthernetPacket()
+			    pkt.payload.uint8[33] = smpCnt / 256 -- 47
+			    pkt.payload.uint8[34] = smpCnt % 256 	
+			    
+			    if i == trigger_index then
+				pkt.payload.uint8[30] = 0x31
+				pkt.payload.uint8[-9] = 0x03
+			    else
+			    	pkt.payload.uint8[30] = 0x32
+			    	pkt.payload.uint16[29] = 0x0000
+			    	pkt.payload.uint8[-9] = 0x01
+			    end
+			end
 			smpCnt = (smpCnt + 1) % samples_per_sec
 
 			if counter == trigger then --trigger trip event
+				pkt = bufs[trigger_index]:getEthernetPacket()
 				pkt.payload.uint16[29] = 0xFFFF --smv value to trigger trip event
-				bufs[1]:enableTimestamps() --enable hw timestamp for this buffer
-				queue:send(bufs) -- send it
+
+				bufs[trigger_index]:enableTimestamps() --enable hw timestamp for this buffer
+				queue:sendN(bufs, burstsize) -- send it
 				tx_time = queue:getTimestamp(500) --retrieve the timestamp from register
 			else
-				pkt.payload.uint16[29] = 0x0000
-				queue:send(bufs)
+				queue:sendN(bufs, burstsize)
 			end
 			counter = counter + 1
 			time_250us = time_250us + time_250us_increment
@@ -373,13 +390,13 @@ function GOOSETimerSlave(queue, duration, bar)
     return timestamp
 end
 
-function SMV92LoadSlaveSw(queue, duration, samples_per_sec, bar)
+function SMV92LoadSlaveSw(queue, duration, samples_per_sec, bar, trigger_index, burstsize)
 	local tscFreq = moongen.getCyclesFrequency()
 	local mem = memory.createMemPool(function(buf)
 		local pkt = buf:getEthernetPacket()
 		pkt:fill {
 			ethSrc = queue,
-			ethDst = "01:0c:cd:01:00:03",--ethDst,
+			ethDst = "01:0c:cd:01:00:01",--ethDst,
 			ethType = 0x8100
 		}
 		ffi.copy(pkt.payload, smvPayload, PKT_SIZE)
@@ -390,7 +407,7 @@ function SMV92LoadSlaveSw(queue, duration, samples_per_sec, bar)
 
 	print("starting the sw publisher")
 	local runtime = timer:new(duration+3)
-	local bufs = mem:bufArray(1) -- prepare 1 buffer per time
+	local bufs = mem:bufArray(burstsize) -- prepare x buffers per time
 
 	-- calculate 250us increment
 	local time_250us_increment = moongen.getCyclesFrequency() / samples_per_sec
@@ -407,26 +424,38 @@ function SMV92LoadSlaveSw(queue, duration, samples_per_sec, bar)
 	while runtime:running() do
 		if time_250us < moongen.getCycles() then
 			bufs:alloc(PKT_SIZE) -- size of each packet
-			local pkt = bufs[1]:getEthernetPacket()
-			pkt.payload.uint8[33] = smpCnt / 256 --hton16(smpCnt)
-			pkt.payload.uint8[34] = smpCnt % 256 --hton16(smpCnt)	
+			local pkt
+			for i, buf in ipairs(bufs) do
+			    pkt = buf:getEthernetPacket()
+			    pkt.payload.uint8[33] = smpCnt / 256 -- 47
+			    pkt.payload.uint8[34] = smpCnt % 256 	
+			    
+			    if i == trigger_index then
+				pkt.payload.uint8[30] = 0x31
+				pkt.payload.uint8[-9] = 0x03
+			    else
+			    	pkt.payload.uint8[30] = 0x32
+			    	pkt.payload.uint16[29] = 0x0000
+			    	pkt.payload.uint8[-9] = 0x01
+			    end
+			end
 			smpCnt = (smpCnt + 1) % samples_per_sec
 
 			if counter == trigger then --trigger trip event
+				pkt = bufs[trigger_index]:getEthernetPacket()
 				pkt.payload.uint16[29] = 0xFFFF --smv value to trigger trip event
+
 				tx_time_1 = moongen.getCycles() 
-				queue:send(bufs)
+				queue:sendN(bufs, burstsize)
 				tx_time_2 = moongen.getCycles()
-				break;
 			else
-				pkt.payload.uint16[29] = 0x0000
-				queue:send(bufs)
+				queue:sendN(bufs, burstsize)
 			end
 			counter = counter + 1
 			time_250us = time_250us + time_250us_increment
 		end
 	end
-    local tx_time = tx_time_1 + ( ( tx_time_2 - tx_time_1) /2) 
+    local tx_time = tx_time_1 + ( ( ( tx_time_2 - tx_time_1) / burstsize) * trigger_index )
     print("tx_time: " .. tonumber(tx_time % 0x100000000))
     return tonumber(tx_time % 0x100000000)
 end
@@ -473,6 +502,8 @@ if standalone then
 	parser:option("-s --samples_per_sec", "samples per second [4000,4800]"):default(4000):convert(tonumber)
 	parser:option("-m --measurements", "amount of measurements done"):default(5):convert(tonumber)
 	parser:option("-t --type", "type of measurements(hw|sw)"):default("hw")
+	parser:option("-i --trigger_index", "stream to trigger on"):default(1):convert(tonumber)
+	parser:option("-b --streamsize", "amount of streams"):default(1):convert(tonumber)
     end
     function master(args)
         --local args = utils.parseArguments(arg)
@@ -511,6 +542,8 @@ if standalone then
 	    samples_per_sec = args.samples_per_sec,
             measurements = args.measurements,
 	    type = args.type,
+    	    trigger_index = args.trigger_index,
+    	    burstsize = args.streamsize,
         })
 
 	print(folderName)

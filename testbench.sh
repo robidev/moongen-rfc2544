@@ -112,18 +112,25 @@ fi
 #
 # The DUT config functions
 #
-
-function config_DUT () { # TODO: TEST IT
-    # start program "$1" on DUT
-    ssh -o UserKnownHostsFile=/dev/null -i $DUT_SSH_KEY_FILE root@$DUT_HOST $1 &
-    return $! # return pid of remote forked process
+function run_on_DUT () { 
+    # start program "$SCRIPT" on DUT
+    export DUT_SSH_KEY_FILE
+    export DUT_HOST 
+    $CURRENT_DIR/utils/ssh.exec.sh $@ &
 }
 
-function unconfig_DUT () { # TODO: TEST IT
-    # kill program PID "$1" on DUT
-    ssh -o UserKnownHostsFile=/dev/null -i $DUT_SSH_KEY_FILE root@$DUT_HOST kill $1
-    return $? # return result
+function waitready_on_DUT () {
+    # wait until aplication is started by checking if the lock file is created
+    echo "Waiting on DUT"
+    ssh -o "StrictHostKeyChecking no" -o LogLevel=ERROR -i $DUT_SSH_KEY_FILE root@$DUT_HOST 'bash -c' \
+      "i=0; while [ ! -f /tmp/$1.lock ] && [[ \$i -le 10 ]]; do sleep 1; i=\$((i+1)); echo \$i; done"
+    echo "DUT done"
 }
+
+#waitready_on_DUT 
+#run_on_DUT $CURRENT_DIR/setup/setup-bare-kern-publisher.sh $DUT_INTERFACE_KERN
+#run_on_DUT $CURRENT_DIR/setup/setup-bare-kern-pkt-mirror.sh $DUT_INTERFACE_KERN
+#run_on_DUT $CURRENT_DIR/setup/remove-any.sh
 
 
 # check if no config.run is loaded, that will be resumed
@@ -278,7 +285,9 @@ if [[ -n "$TEST_IEC61850" ]]; then
                                          -s $TEST_IEC61850_SAMPLES_SEC \
 					 -m $TEST_IEC61850_MEASUREMENTS \
 					 -t $TEST_IEC61850_TYPE \
-                                         -f $FOLDER_NAME
+                                         -f $FOLDER_NAME \
+					 -i $TEST_IEC61850_STREAM_TRIGGER_INDEX \
+					 -b $TEST_IEC61850_STREAMS
 
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
