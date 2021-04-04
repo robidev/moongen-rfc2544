@@ -5,6 +5,8 @@
 
 SCRIPT=$1
 
+CURRENT_DIR=$(dirname "$BASH_SOURCE")
+
 if [[ ! -f $SCRIPT ]]; then
 echo "ERROR @ $HOSTNAME(tester): Script '$1' not found"
 exit 1
@@ -31,7 +33,11 @@ ssh -o "StrictHostKeyChecking no" -o LogLevel=ERROR -i $DUT_SSH_KEY_FILE root@$D
 #!/bin/bash
 unset LANG LC_ALL LC_COLLATE LC_CTYPE LC_MESSAGES LC_NUMERIC TZ
 export LC_ALL=en_US.UTF-8
+
 $(<$SCRIPT)
+
+$(<$CURRENT_DIR/run_app.sh)
+
 ENDSSH
 
 SSH_RESULT=\$?

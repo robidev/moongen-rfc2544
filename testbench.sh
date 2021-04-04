@@ -112,25 +112,54 @@ fi
 #
 # The DUT config functions
 #
-function run_on_DUT () { 
-    # start program "$SCRIPT" on DUT
-    export DUT_SSH_KEY_FILE
-    export DUT_HOST 
-    $CURRENT_DIR/utils/ssh.exec.sh $@ &
+export DUT_SSH_KEY_FILE
+export DUT_HOST 
+
+function run_on_DUT_sync () { 
+    # start program "$SCRIPT" on DUT in background (active ssh, with DUT logging in this session)
+    SCRIPT=$1
+    shift
+    echo "Starting application '$SCRIPT' on DUT synchonously"
+    $CURRENT_DIR/utils/ssh.exec.app.sh "$SCRIPT" "sync" $@ &
+
+    waitready_on_DUT "$SCRIPT"
+    return $?
+}
+
+function run_on_DUT_async () { 
+    # start program "$SCRIPT" on DUT asynchronously (no active ssh, DUT logging to /dev/null)
+    SCRIPT=$1
+    shift
+    echo "Starting application '$SCRIPT' on DUT asynchonously"
+    $CURRENT_DIR/utils/ssh.exec.app.sh "$SCRIPT" "async" $@
+    RETURN=$?
+    if [[ $RETURN -eq 0 ]]; then
+        waitready_on_DUT "$SCRIPT"
+    fi
+    return $?
 }
 
 function waitready_on_DUT () {
     # wait until aplication is started by checking if the lock file is created
     echo "Waiting on DUT"
-    ssh -o "StrictHostKeyChecking no" -o LogLevel=ERROR -i $DUT_SSH_KEY_FILE root@$DUT_HOST 'bash -c' \
-      "i=0; while [ ! -f /tmp/$1.lock ] && [[ \$i -le 10 ]]; do sleep 1; i=\$((i+1)); echo \$i; done"
-    echo "DUT done"
+    $CURRENT_DIR/utils/ssh.exec.app.sh "$1" "waitReady" "$2"
+    return $?
 }
 
-#waitready_on_DUT 
-#run_on_DUT $CURRENT_DIR/setup/setup-bare-kern-publisher.sh $DUT_INTERFACE_KERN
-#run_on_DUT $CURRENT_DIR/setup/setup-bare-kern-pkt-mirror.sh $DUT_INTERFACE_KERN
-#run_on_DUT $CURRENT_DIR/setup/remove-any.sh
+function stop_on_DUT () {
+    # stop all applications
+    SCRIPT=$1
+    echo "Stopping $SCRIPT on DUT"
+    $CURRENT_DIR/utils/ssh.exec.app.sh "$SCRIPT" "stop"
+    echo "Stopping done"
+}
+
+function stop_all_on_DUT () {
+    # stop all applications
+    echo "Stopping applications on DUT"
+    $CURRENT_DIR/utils/ssh.exec.sh $CURRENT_DIR/utils/run_app.sh stopAll
+    echo "Stopping done"
+}
 
 
 # check if no config.run is loaded, that will be resumed
@@ -174,6 +203,16 @@ if [[ -n "$TEST_THROUGHPUT" ]]; then
     echo ""
     echo "-- Starting throughput test --"
     echo ""
+
+    if [[ -n "$CONFIG_DUT" ]]; then
+        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $DUT_INTERFACE_KERN
+
+        if [[ $? -ne 0 ]]; then
+            echo "ERROR: Could not configure DUT for test"
+            exit 1
+        fi
+    fi
+
     $MOONGEN ./benchmarks/throughput.lua $TXPORT $RXPORT \
                                          -d $TEST_THROUGHPUT_DURATION \
                                          -n $TEST_THROUGHPUT_NUM_ITERATIONS \
@@ -197,6 +236,16 @@ if [[ -n "$TEST_LATENCY" ]]; then
     echo ""
     echo "-- Starting latency test --"
     echo ""
+
+    if [[ -n "$CONFIG_DUT" ]]; then
+        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $DUT_INTERFACE_KERN
+
+        if [[ $? -ne 0 ]]; then
+            echo "ERROR: Could not configure DUT for test"
+            exit 1
+        fi
+    fi
+
     $MOONGEN ./benchmarks/latency.lua $TXPORT $RXPORT \
                                          -d $TEST_LATENCY_DURATION \
                                          -r $TEST_LATENCY_RT \
@@ -220,6 +269,16 @@ if [[ -n "$TEST_FRAMELOSS" ]]; then
     echo ""
     echo "-- Starting frameloss test --"
     echo ""
+
+    if [[ -n "$CONFIG_DUT" ]]; then
+        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $DUT_INTERFACE_KERN
+
+        if [[ $? -ne 0 ]]; then
+            echo "ERROR: Could not configure DUT for test"
+            exit 1
+        fi
+    fi
+
     $MOONGEN ./benchmarks/frameloss.lua $TXPORT $RXPORT \
                                          -d $TEST_FRAMELOSS_DURATION \
                                          -g $TEST_FRAMELOSS_GRANULARITY \
@@ -240,6 +299,16 @@ if [[ -n "$TEST_BACKTOBACK" ]]; then
     echo ""
     echo "-- Starting backtoback test --"
     echo ""
+
+    if [[ -n "$CONFIG_DUT" ]]; then
+        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $DUT_INTERFACE_KERN
+
+        if [[ $? -ne 0 ]]; then
+            echo "ERROR: Could not configure DUT for test"
+            exit 1
+        fi
+    fi
+
     $MOONGEN ./benchmarks/backtoback.lua $TXPORT $RXPORT \
                                          -d $TEST_BACKTOBACK_DURATION \
                                          -n $TEST_BACKTOBACK_NUM_ITERATIONS \
@@ -258,6 +327,16 @@ if [[ -n "$TEST_INTER_ARRIVAL_TIME" ]]; then
     echo ""
     echo "-- Starting inter-arrival-times test --"
     echo ""
+
+    if [[ -n "$CONFIG_DUT" ]]; then
+        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_92PUBLISHER $DUT_INTERFACE_KERN
+
+        if [[ $? -ne 0 ]]; then
+            echo "ERROR: Could not configure DUT for test"
+            exit 1
+        fi
+    fi
+
     $MOONGEN ./benchmarks/inter-arrival-times.lua $TXPORT $RXPORT \
                                          -d $TEST_INTER_ARRIVAL_TIME_DURATION \
                                          -r $TEST_INTER_ARRIVAL_TIME_RT \
@@ -280,6 +359,16 @@ if [[ -n "$TEST_IEC61850" ]]; then
     echo ""
     echo "-- Starting SMV 9-2 test --"
     echo ""
+
+    if [[ -n "$CONFIG_DUT" ]]; then
+        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_OPEN_SERVER $DUT_INTERFACE_KERN
+
+        if [[ $? -ne 0 ]]; then
+            echo "ERROR: Could not configure DUT for test"
+            exit 1
+        fi
+    fi
+
     $MOONGEN ./benchmarks/SMV9-2.lua $TXPORT $RXPORT \
                                          -d $TEST_IEC61850_DURATION \
                                          -s $TEST_IEC61850_SAMPLES_SEC \
@@ -296,6 +385,14 @@ if [[ -n "$TEST_IEC61850" ]]; then
         echo "unset TEST_IEC61850" >> "$CURRENT_DIR/CONFIG.run"
     fi
 fi
+
+#
+# stop all test applications on DUT
+#
+if [[ -n "$CONFIG_DUT" ]]; then
+    stop_all_on_DUT
+fi
+
 #
 # finalize latex file
 #
@@ -311,6 +408,7 @@ if [[ -z "$TEST_FINISH" ]]; then
         echo 'TEST_FINISH="y"' >> "$CURRENT_DIR/CONFIG.run"
     fi
 fi
+
 
 #
 # generate report from latex file
