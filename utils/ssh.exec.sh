@@ -2,6 +2,10 @@
 #
 # Script to run scripts on the DUT
 #
+# Arguments:
+# script	script to run on the DUT
+# [..]		any arguments to pass on to script
+#
 
 SCRIPT=$1
 

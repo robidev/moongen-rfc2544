@@ -2,6 +2,10 @@
 #
 # Script to run scripts on the DUT
 #
+# Arguments:
+# script	script to load before run_app.sh
+# [..]		any arguments to pass on to run_app.sh
+#
 
 SCRIPT=$1
 

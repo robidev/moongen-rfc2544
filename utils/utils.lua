@@ -21,6 +21,15 @@ function mod.setDeviceOS(name)
     deviceOS = name
 end
 
+local deviceTechnology = ""
+
+function mod.getDeviceTechnology()
+    return deviceTechnology
+end
+
+function mod.setDeviceTechnology(name)
+    deviceTechnology = name
+end
 
 local binarySearch = {}
 binarySearch.__index = binarySearch

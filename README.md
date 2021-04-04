@@ -78,8 +78,24 @@ Part of the tests use DPDK technology on the DUT, so those will need to have a N
 # Configuring tests #
 
 Modify the config items in; CONFIG.sh  
-The test takes about xx time. use xx to shorten this  
+You can there choose the following options:
+- set the folder where tests should be stored
+- set the DPDK PCI address of the interface the testbench should use
+- have the script set up the DUT, automatic via ssh or with manual prompts
+- choose the type of technology the DUT should use. current possiblities are kernel or DPDK. More will be added (docker, kvm)
+- test frame sizes. 128, 256, 512 are representative for common GOOSE/SMV9-2 packets
+- test duration
+- test iterations
+- load rates
+- test report pdf generation from .tex file
 
+The following test can be chosen
+- measure maximum troughput
+- measure link latency (at full rate or no-load)
+- measure frame-loss for each rate
+- measure maximum burst length for each frame-size
+- measure link inter-arrival-time (at full rate or no load)
+- measure full round-trip latency between SMV-9-2 packet and GOOSE trip
 
 # Running tests #
 

@@ -197,7 +197,7 @@ if [[ -z "$TEST_START" ]]; then
     echo ""
     echo "-- Creating tex file --"
     echo ""
-    $MOONGEN ./benchmarks/start.lua $DUT_NAME $DUT_OS -f $FOLDER_NAME
+    $MOONGEN ./benchmarks/start.lua $DUT_NAME $DUT_OS $CONFIG_DUT_TECHNOLOGY -f $FOLDER_NAME
     if [ $? -ne 0 ]; then
         echo "ERROR: MoonGen script not executed succesfully"
         exit 1

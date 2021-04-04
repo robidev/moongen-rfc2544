@@ -17,11 +17,13 @@ if standalone then
         parser:description("start report")
 	parser:argument("device", "device name")
 	parser:argument("OS", "device os")
+	parser:argument("technology", "used technology(kernel/dpdk)")
 	parser:option("-f --folder", "folder"):default("testresults")
     end
     function master(args)      
 	utils.setDeviceName(args.device)
 	utils.setDeviceOS(args.OS)
+	utils.setDeviceTechnology(args.technology)
 
 	local folderName = args.folder
 	-- create testresult folder if not exist

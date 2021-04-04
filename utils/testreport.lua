@@ -30,6 +30,7 @@ local generalInfoTex = [[
 \begin{tabu} to \textwidth{lX}
 Device Under Test: & ##DUT_NAME## \\
 Operating System: & ##OS_NAME## \\
+Technology: & ##TECHNOLOGY## \\
 Date: & ##DATE##\\
 \end{tabu}
 ]]
@@ -127,6 +128,7 @@ function mod:writeGeneralInfo(file)
     local tex = generalInfoTex
     tex = tex:gsub("##DUT_NAME##", utils.getDeviceName())
     tex = tex:gsub("##OS_NAME##", utils.getDeviceOS())
+    tex = tex:gsub("##TECHNOLOGY##", utils.getDeviceTechnology())
     tex = tex:gsub("##DATE##", os.date("%F"))
     file:write(tex)
 end

@@ -6,11 +6,22 @@
 # APP		contains the application name
 # CMD 		contains the command to run
 #
-# And the following functions:
+# And the following function:
 #
 # runCommand	is called to define CMD
-# signalHandler	is called to handle the kill signal
 #
+# Arguments:
+# stop  		stop a specific application
+# stopAll		stop all applications
+# waitReady [timeout]	check if the application is running. Default timeout: 5 seconds
+# sync			run application and don't return
+# async			run application and return
+#
+# The script will check if a /tmp/testbench.lock/APP.lock is present, and if it matches the current APP name
+# if so, the script checks if the PID still is active and terminates
+# else it will terminate the active application, and remove the locl files
+# then it will start the application directly(sync) or with nohub as a separate process(async)
+# finally it will create the lock files for the PID of the just started application
 
 CURRENT_DIR=$(dirname "$BASH_SOURCE")
 
@@ -22,41 +33,41 @@ exitHandler() {
 
 stop() {
     filename=$1
-        # read the pid
-        PID=$( <$filename )
-        echo "INFO @ $HOSTNAME(DUT): Testbench lockfile PID: $PID"
+    # read the pid
+    PID=$( <$filename )
+    echo "INFO @ $HOSTNAME(DUT): Testbench lockfile PID: $PID"
 
-        if [[ $PID != ?(-)+([0-9]) ]]; then
-           echo "ERROR @ $HOSTNAME(DUT): Could not find valid pid for lockfile: '$filename', giving up"
-           return 1
-        fi
+    if [[ $PID != ?(-)+([0-9]) ]]; then
+        echo "ERROR @ $HOSTNAME(DUT): Could not find valid pid for lockfile: '$filename', giving up"
+        return 1
+    fi
 
-        # send kill signal to pid
-        echo "INFO @ $HOSTNAME(DUT): Killing process with PID: $PID"
-        kill $PID #kill -2 pid
+    # send kill signal to pid
+    echo "INFO @ $HOSTNAME(DUT): Killing process with PID: $PID"
+    kill $PID #kill -2 pid
 
-        echo "INFO @ $HOSTNAME(DUT): Waiting for process to shut down.."
-        # wait for pid to be shut down
+    echo "INFO @ $HOSTNAME(DUT): Waiting for process to shut down.."
+    # wait for pid to be shut down
+    timeout 10 tail --pid=$PID -f /dev/null
+
+    if [[ $? -eq 124 ]]; then # wait for process terminate timed out
+        echo "ERROR @ $HOSTNAME(DUT): Could not kill pid: $PID, forcing (kill -9)"
+        kill -9 $PID
         timeout 10 tail --pid=$PID -f /dev/null
-
-        if [[ $? -eq 124 ]]; then # wait for process terminate timed out
-            echo "ERROR @ $HOSTNAME(DUT): Could not kill pid: $PID, forcing (kill -9)"
-            kill -9 $PID
-            timeout 10 tail --pid=$PID -f /dev/null
-            if [[ $? -eq 124 ]]; then
-                echo "ERROR @ $HOSTNAME(DUT): Could not kill pid: $PID, giving up"
-                return 1
-            fi
+        if [[ $? -eq 124 ]]; then
+            echo "ERROR @ $HOSTNAME(DUT): Could not kill pid: $PID, giving up"
+            return 1
         fi
-        echo "INFO @ $HOSTNAME(DUT): Process is shut down"
+    fi
+    echo "INFO @ $HOSTNAME(DUT): Process is shut down"
 
-        # check if lock is also gone
-        sleep 1 # to prevent race condition
-        if [[ -f $filename ]]; then
-            echo "ERROR @ $HOSTNAME(DUT): Process is gone, but lock was not removed, forcing remove of lockfile"
-            rm -f $filename
-        fi
-        echo "INFO @ $HOSTNAME(DUT): Lock is removed"
+    # check if lock is also gone
+    sleep 1 # to prevent race condition
+    if [[ -f $filename ]]; then
+        echo "ERROR @ $HOSTNAME(DUT): Process is gone, but lock was not removed, forcing remove of lockfile"
+        rm -f $filename
+    fi
+    echo "INFO @ $HOSTNAME(DUT): Lock is removed"
 }
 
 stopAll() {
@@ -160,16 +171,25 @@ echo "INFO @ $HOSTNAME(DUT): Starting application: '$APP' with command: '$CMD'"
 
 #set CMD and pass any remaining arguments
 runCommand $@
+if [[ $? -ne 0 ]]; then
+    echo "ERROR @ $HOSTNAME(DUT): runCommand() returned nonzero, cannot start app"
+    exit 1
+fi
 
-if [[ -z $CMD ]];then
+if [[ -z $CMD ]]; then
     echo "ERROR @ $HOSTNAME(DUT): CMD not set, nothing to execute"
     echo "ERROR @ $HOSTNAME(DUT): Please define CMD in runCommand() to the command to run"
     exit 1
 fi
 
 if [[ $MODE == "async" ]]; then
-    echo "INFO @ $HOSTNAME(DUT): Running application with nohub"
-    nohup $CMD >/dev/null 2>&1 &
+    echo "INFO @ $HOSTNAME(DUT): Running application with nohup"
+
+    echo ""				 >> /var/log/$APP.log
+    echo "-- STARTING $APP with nohup--" >> /var/log/$APP.log
+    echo "" 				 >> /var/log/$APP.log
+
+    nohup $CMD >>/var/log/$APP.log 2>&1 &
     CURPID=$!
 else
     echo "INFO @ $HOSTNAME(DUT): Registered signal traps"
