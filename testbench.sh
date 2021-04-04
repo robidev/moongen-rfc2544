@@ -37,7 +37,7 @@ fi
 CURRENT_DIR=$(dirname "$BASH_SOURCE")
 
 #
-# load configuration from CONFIG.sh or an active run with CONFIG.run
+# load configuration from CONFIG or an active run with CONFIG.run
 #
 if [[ $1 == "retry" ]]; then
     # check for config file

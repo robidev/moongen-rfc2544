@@ -77,7 +77,7 @@ Part of the tests use DPDK technology on the DUT, so those will need to have a N
 
 # Configuring tests #
 
-Modify the config items in; CONFIG.sh  
+Modify the config items in; CONFIG  
 You can there choose the following options:
 - set the folder where tests should be stored
 - set the DPDK PCI address of the interface the testbench should use
