@@ -112,8 +112,9 @@ fi
 #
 # The DUT config functions
 #
-export DUT_SSH_KEY_FILE
-export DUT_HOST 
+export CONFIG_DUT_HOST 
+export CONFIG_DUT_SSH_KEY_FILE
+
 
 function run_on_DUT_sync () { 
     # start program "$SCRIPT" on DUT in background (active ssh, with DUT logging in this session)
@@ -151,14 +152,22 @@ function stop_on_DUT () {
     SCRIPT=$1
     echo "Stopping $SCRIPT on DUT"
     $CURRENT_DIR/utils/ssh.exec.app.sh "$SCRIPT" "stop"
-    echo "Stopping done"
 }
 
 function stop_all_on_DUT () {
     # stop all applications
-    echo "Stopping applications on DUT"
+    echo "Stopping all applications on DUT"
     $CURRENT_DIR/utils/ssh.exec.sh $CURRENT_DIR/utils/run_app.sh stopAll
-    echo "Stopping done"
+}
+
+function run_manual () {
+    SCRIPT=$1
+    shift
+    $CURRENT_DIR/utils/manual.exec.sh "$SCRIPT" $@
+}
+
+function stop_manual () {
+    $CURRENT_DIR/utils/manual.exec.sh stopAll
 }
 
 
@@ -205,7 +214,7 @@ if [[ -n "$TEST_THROUGHPUT" ]]; then
     echo ""
 
     if [[ -n "$CONFIG_DUT" ]]; then
-        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $DUT_INTERFACE_KERN
+        $CONFIG_DUT_RUN $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $CONFIG_DUT_PKT_MIRROR_ARGS
 
         if [[ $? -ne 0 ]]; then
             echo "ERROR: Could not configure DUT for test"
@@ -238,7 +247,7 @@ if [[ -n "$TEST_LATENCY" ]]; then
     echo ""
 
     if [[ -n "$CONFIG_DUT" ]]; then
-        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $DUT_INTERFACE_KERN
+        $CONFIG_DUT_RUN $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $CONFIG_DUT_PKT_MIRROR_ARGS
 
         if [[ $? -ne 0 ]]; then
             echo "ERROR: Could not configure DUT for test"
@@ -271,7 +280,7 @@ if [[ -n "$TEST_FRAMELOSS" ]]; then
     echo ""
 
     if [[ -n "$CONFIG_DUT" ]]; then
-        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $DUT_INTERFACE_KERN
+        $CONFIG_DUT_RUN $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $CONFIG_DUT_PKT_MIRROR_ARGS
 
         if [[ $? -ne 0 ]]; then
             echo "ERROR: Could not configure DUT for test"
@@ -301,7 +310,7 @@ if [[ -n "$TEST_BACKTOBACK" ]]; then
     echo ""
 
     if [[ -n "$CONFIG_DUT" ]]; then
-        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $DUT_INTERFACE_KERN
+        $CONFIG_DUT_RUN $CURRENT_DIR/config_scripts/$CONFIG_DUT_PKT_MIRROR $CONFIG_DUT_PKT_MIRROR_ARGS
 
         if [[ $? -ne 0 ]]; then
             echo "ERROR: Could not configure DUT for test"
@@ -329,7 +338,7 @@ if [[ -n "$TEST_INTER_ARRIVAL_TIME" ]]; then
     echo ""
 
     if [[ -n "$CONFIG_DUT" ]]; then
-        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_92PUBLISHER $DUT_INTERFACE_KERN
+        $CONFIG_DUT_RUN $CURRENT_DIR/config_scripts/$CONFIG_DUT_92PUBLISHER $CONFIG_DUT_92PUBLISHER_ARGS
 
         if [[ $? -ne 0 ]]; then
             echo "ERROR: Could not configure DUT for test"
@@ -361,7 +370,7 @@ if [[ -n "$TEST_IEC61850" ]]; then
     echo ""
 
     if [[ -n "$CONFIG_DUT" ]]; then
-        run_on_DUT_async $CURRENT_DIR/config_scripts/$CONFIG_DUT_OPEN_SERVER $DUT_INTERFACE_KERN
+        $CONFIG_DUT_RUN $CURRENT_DIR/config_scripts/$CONFIG_DUT_IEC61850_SERVER $CONFIG_DUT_IEC61850_SERVER_ARGS
 
         if [[ $? -ne 0 ]]; then
             echo "ERROR: Could not configure DUT for test"
@@ -390,7 +399,7 @@ fi
 # stop all test applications on DUT
 #
 if [[ -n "$CONFIG_DUT" ]]; then
-    stop_all_on_DUT
+    $CONFIG_DUT_STOP
 fi
 
 #

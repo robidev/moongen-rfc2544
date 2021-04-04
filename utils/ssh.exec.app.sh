@@ -15,7 +15,7 @@ fi
 shift # eat first argument (script name)
 ARGS=$@  # pass other arguments to script
 
-echo "INFO @ $HOSTNAME(tester): Running '$SCRIPT' with args '$ARGS' passed on DUT '$DUT_HOST'"
+echo "INFO @ $HOSTNAME(tester): Running '$SCRIPT' with args '$ARGS' passed on DUT '$CONFIG_DUT_HOST'"
 
 
 
@@ -29,7 +29,7 @@ trap -- "exit 2" 1 2 3 15
 # generate script to execute
 { cat <<EOBATCH
 #!/bin/bash
-ssh -o "StrictHostKeyChecking no" -o LogLevel=ERROR -i $DUT_SSH_KEY_FILE root@$DUT_HOST 'bash -s $@' <<'ENDSSH'
+ssh -o "StrictHostKeyChecking no" -o LogLevel=ERROR -i $CONFIG_DUT_SSH_KEY_FILE root@$CONFIG_DUT_HOST 'bash -s $@' <<'ENDSSH'
 #!/bin/bash
 unset LANG LC_ALL LC_COLLATE LC_CTYPE LC_MESSAGES LC_NUMERIC TZ
 export LC_ALL=en_US.UTF-8
@@ -52,7 +52,7 @@ chmod +x $TMPFILE
 $TMPFILE $ARGS
 EXIT=$?
 
-echo "INFO @ $HOSTNAME(tester): '$SCRIPT' with args '$ARGS' passed on DUT '$DUT_HOST' exited with $EXIT"
+echo "INFO @ $HOSTNAME(tester): '$SCRIPT' with args '$ARGS' passed on DUT '$CONFIG_DUT_HOST' exited with $EXIT"
 
 exit $EXIT
 
