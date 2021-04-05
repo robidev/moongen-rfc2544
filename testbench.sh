@@ -360,7 +360,7 @@ if [[ -n "$TEST_INTER_ARRIVAL_TIME" ]]; then
 	echo "ERROR: MoonGen script not executed succesfully"
 	exit 1
     else
-        echo "unset TEST_INTER_ARRIVAL" >> "$CURRENT_DIR/CONFIG.run"
+        echo "unset TEST_INTER_ARRIVAL_TIME" >> "$CURRENT_DIR/CONFIG.run"
     fi
 fi
 

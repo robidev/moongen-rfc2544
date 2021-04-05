@@ -27,7 +27,7 @@ CONFIG_DUT_TYPE="ssh"   			# type of DUT config can be via "ssh" or "manual"
 
 if [[ $CONFIG_DUT_TYPE == "ssh" ]]; then
     # ssh config
-    CONFIG_DUT_HOST="127.0.0.1" 		# IP of second DUT interface (with listening ssh daemon)
+    CONFIG_DUT_HOST="10.1.1.103" 		# IP of second DUT interface (with listening ssh daemon)
     CONFIG_DUT_SSH_KEY_FILE="./key/ansible_public_ssh_key.priv"
 
     CONFIG_DUT_RUN=run_on_DUT_async 		# alternative: run_on_DUT_sync
@@ -38,10 +38,10 @@ else
     CONFIG_DUT_STOP=stop_manual
 fi
 
-CONFIG_DUT_TECHNOLOGY="kernel" 			# kernel or dpdk (futrue: docker, kvm)
+CONFIG_DUT_TECHNOLOGY="kernel" 			# kernel or dpdk (future: docker, kvm)
 
 if [[ $CONFIG_DUT_TECHNOLOGY == "kernel" ]]; then
-    CONFIG_DUT_INTERFACE_KERN="enp7s0f0"  	# kernel (ifconfig / ip address show) interface name
+    CONFIG_DUT_INTERFACE_KERN="enp0s31f6"  	# kernel (ifconfig / ip address show) interface name
 
     # DUT setup scripts reside in config_scripts subdirectory
     CONFIG_DUT_PKT_MIRROR="bare-kern-pkt-mirror.sh"

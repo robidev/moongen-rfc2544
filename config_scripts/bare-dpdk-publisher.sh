@@ -14,7 +14,7 @@ runCommand() {
     dpdk-devbind -b igb_uio $1	# bind the interface provided as argument for dpdk
 
     DIR=/usr/bin #/home/user/projects/seapath-test-tools/dpdk/smv9-2-publisher/build
-    CMD="$DIR/dpdk_smv9-2-publisher-static -c 2 -n 4 0"
+    CMD="$DIR/dpdk-smv9-2-publisher -c 2 -n 4 0"
 }
 
 

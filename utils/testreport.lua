@@ -246,7 +246,7 @@ end
 
 function mod:writeSMV92(file)
     local tex = SMV92InfoTex
-    tex = tex:gsub("##SAMPLES##", string.format("%d s", self.smv92.samples_per_sec))
+    tex = tex:gsub("##SAMPLES##", string.format("%d pkt/s", self.smv92.samples_per_sec))
     file:write(tex)
     file:write(vspaceTex)
     file:write("\\begin{longtabu} to \\textwidth {X[-1,r,m]X[-1,r,m]X[-1,r,m]X[4,r,m]} \\hline\n")
