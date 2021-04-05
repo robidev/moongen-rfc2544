@@ -175,7 +175,7 @@ function benchmark:bench(frameSize, rate)
 	rate = rate * frameSize / (frameSize + 20) / numQueues
     end
     --allow no load tests by setting rate or maxqueues to 0
-    if self.maxQueues == 0 or rate == 0 then
+    if self.maxQueues == 0 or rate == 0 or frameSize == 0 then
 	numQueues = 0
 	print("INFO: load is disabled")
     else

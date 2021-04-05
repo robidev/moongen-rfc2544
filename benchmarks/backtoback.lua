@@ -641,12 +641,14 @@ if standalone then
 	file = io.open(folderName .. "/backtoback.csv", "w")
 	log(file, bench:getCSVHeader(), true)
 	for _, frameSize in ipairs(FRAME_SIZES) do
+            if frameSize > 0 then
 		local result = bench:bench(frameSize)
 		
 		-- save and report results
 		table.insert(results, result)
 		log(file, bench:resultToCSV(result), true)
 		report:addBackToBack(result, bench.duration, args.bths, txDev:getLinkStatus().speed)
+            end
 	end
 	bench:toTikz(folderName .. "/plot_backtoback", unpack(results))
 	file:close()

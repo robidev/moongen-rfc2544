@@ -540,14 +540,16 @@ if standalone then
 	local ratefile = io.open(folderName .. "/rates.txt", "w")
 	log(file, bench:getCSVHeader(), true)
 	for _, frameSize in ipairs(FRAME_SIZES) do
-	    local result, avgRate = bench:bench(frameSize)
-	    rates[frameSize] = avgRate
-            ratefile:write(frameSize .. "," .. avgRate .. "\n")
+            if frameSize > 0 then
+	        local result, avgRate = bench:bench(frameSize)
+	        rates[frameSize] = avgRate
+	        ratefile:write(frameSize .. "," .. avgRate .. "\n")
 
-	    -- save and report results
-	    table.insert(results, result)
-	    log(file, bench:resultToCSV(result), true)
-	    report:addThroughput(result, args.duration, args.mlr, args.rths)
+	        -- save and report results
+	        table.insert(results, result)
+	        log(file, bench:resultToCSV(result), true)
+	        report:addThroughput(result, args.duration, args.mlr, args.rths)
+            end
 	end
 	bench:toTikz(folderName .. "/plot_throughput", unpack(results))
 	file:close()

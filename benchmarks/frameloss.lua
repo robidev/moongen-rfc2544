@@ -496,12 +496,14 @@ if standalone then
 	file = io.open(folderName .. "/frameloss.csv", "w")
 	log(file, bench:getCSVHeader(), true)
 	for _, frameSize in ipairs(FRAME_SIZES) do
+            if frameSize > 0 then
 		local result = bench:bench(frameSize)
 		
 		-- save and report results
 		table.insert(results, result)
 		log(file, bench:resultToCSV(result), true)
 		report:addFrameloss(result, args.duration)
+            end
 	end
 	bench:toTikz(folderName .. "/plot_frameloss", unpack(results))
 	file:close()
