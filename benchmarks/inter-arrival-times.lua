@@ -59,7 +59,9 @@ function benchmark:init(arg)
     
     self.dut = arg.dut
 
-    self.rateType = arg.ratetype
+    --self.rateType = arg.ratetype
+    self.latencytype = arg.latencytype
+    self.loadratetype = arg.loadratetype
 
     self.maxQueues = arg.maxQueues
     self.settleTime = arg.settleTime
@@ -197,26 +199,31 @@ function benchmark:bench(frameSize, rate)
 
     -- traffic generator
     for i=1, numQueues do
-	if self.rateType == "hw" then
+	if self.loadratetype == "hw" then
             self.txQueues[i]:setRate(rate)
             table.insert(loadSlaves, moongen.startTask("InterArrivalTimeLoadSlave", self.txQueues[i], port, frameSize, self.duration, bar,self.settleTime))
 	end
-	if self.rateType == "cbr" then
+	if self.loadratetype == "cbr" then
 	    print("WARNING: ratelimiter uses an extra thread/core.")
 	    local delay_ns = ((frameSize + 20) * 8 ) * (1000 / rate)
 	    print("inter packet delay: " .. delay_ns) 
 	    rateLimiter[i] = limiter:new(self.txQueues[i], "cbr", delay_ns)
             table.insert(loadSlaves, moongen.startTask("InterArrivalTimeLoadSlaveCBR", self, rateLimiter[i], port, frameSize, self.duration, bar, rate))
 	end
-	if self.rateType == "poison" then
+	if self.loadratetype == "poison" then
             table.insert(loadSlaves, moongen.startTask("InterArrivalTimeLoadSlavePoison", self, self.txQueues[i], port, frameSize, self.duration, bar, rate, maxLinkRate, self.settleTime))
 	end
     end
     
-    --local timerTask = moongen.startTask("InterArrivalTimeTimerSlave", self.rxQueues[1], self.duration, bar)
-    --local hist = timerTask:wait()
-    local hist = InterArrivalTimeTimerSlave(self.rxQueues[1], self.duration, bar, self.etype)
-    --local hist = InterArrivalTimeTimerSlaveSoftwareTimestamp(self.rxQueues[1], self.duration, bar)
+    local hist
+    if self.latencytype == "hw" then
+       --local timerTask = moongen.startTask("InterArrivalTimeTimerSlave", self.rxQueues[1], self.duration, bar)
+        --local hist = timerTask:wait()
+        hist = InterArrivalTimeTimerSlave(self.rxQueues[1], self.duration, bar, self.etype)
+    else --sw
+        hist = InterArrivalTimeTimerSlaveSoftwareTimestamp(self.rxQueues[1], self.duration, bar)
+    end
+
     hist:print()
 
     if hist.numSamples == 0 then
@@ -449,7 +456,7 @@ function InterArrivalTimeTimerSlave(queue, duration, bar, etype)
     local count = 0
     local lastTimestamp = nil
     local prevCounter = 0
-    print("starting the measurement")
+    print("starting the measurement using hardware based timestamping")
     while timer:running() do
 	local n = queue:tryRecv(bufs, 1000)
 	for i = 1, n do
@@ -508,7 +515,7 @@ function InterArrivalTimeTimerSlaveSoftwareTimestamp(queue, duration, bar)
     local timer = timer:new(duration + 3)
     local count = 0
     local lastTimestamp = nil
-    print("starting the measurement")
+    print("starting the measurement using software based timestamping")
     while timer:running() do
 	local n = queue:recvWithTimestamps(bufs)
 	for i = 1, n do
@@ -541,7 +548,8 @@ if standalone then
        parser:option("-q --maxQueues", "<max load queues>"):default(1):convert(tonumber)
         parser:option("-k --settleTime", "time to warm up>"):default(0.1):convert(tonumber)
 	parser:option("-f --folder", "folder"):default("testresults")
-	parser:option("-t --ratetype", "rate type (hw,cbr,poison)"):default("cbr")
+	parser:option("-t --loadratetype", "load rate type (hw,cbr,poison)"):default("cbr")
+	parser:option("-l --latencytype", "latency measurement type (hw,sw)"):default("sw")
 	parser:option("-s --fs", "frame sizes e.g;'64 128 ..'"):default("64,128,256,512,1024,1280,1518")
 	parser:flag("-o --overwrite", "overwrite rates"):default(false)
     end
@@ -579,7 +587,8 @@ if standalone then
             txQueues = {txDev:getTxQueue(1), txDev:getTxQueue(2), txDev:getTxQueue(3), txDev:getTxQueue(4)}, 
             rxQueues = {rxDev:getRxQueue(0)}, 
             duration = args.duration,
-	    ratetype = args.ratetype,
+	    latencytype = args.latencytype,
+	    loadratetype = args.loadratetype,
 
 	    maxQueues = args.maxQueues,
 	    settleTime = args.settleTime,

@@ -354,7 +354,8 @@ if [[ -n "$TEST_INTER_ARRIVAL_TIME" ]]; then
                                          -f $FOLDER_NAME \
                                          $TEST_INTER_ARRIVAL_TIME_OVERRIDE \
                                          -t $USE_RATE_TYPE \
-                                         -s $FRAME_SIZES
+                                         -s $FRAME_SIZES \
+					 -l $TEST_INTER_ARRIVAL_TIME_TYPE
 
     if [ $? -ne 0 ]; then
 	echo "ERROR: MoonGen script not executed succesfully"
