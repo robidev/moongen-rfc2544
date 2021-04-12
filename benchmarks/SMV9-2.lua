@@ -316,7 +316,7 @@ function SMV92LoadSlave(queue, duration, samples_per_sec, bar, trigger_index, bu
 	-- set time for start
 	local time_250us = moongen.getCycles() + moongen.getCyclesFrequency()
 
-	local trigger = (duration -1) * samples_per_sec -- trigger one second before duration ends
+	local trigger = (duration - 1) * samples_per_sec -- trigger one second before duration ends
 
 	local smpCnt = 0
 	local tx_time = -1
@@ -331,20 +331,23 @@ function SMV92LoadSlave(queue, duration, samples_per_sec, bar, trigger_index, bu
 			    pkt.payload.uint8[33] = smpCnt / 256 -- 47
 			    pkt.payload.uint8[34] = smpCnt % 256 	
 			    
-			    if i == trigger_index then
-				pkt.payload.uint8[30] = 0x31
-				pkt.payload.uint8[-9] = 0x03
-			    else
-			    	pkt.payload.uint8[30] = 0x32
+			    if i == trigger_index then--measuring stream( subscribed to)
+				pkt.payload.uint8[30] = 0x31 --PhsMeas1
+				pkt.payload.uint16[29] = 0x0000
+				pkt.payload.uint8[-9] = 0x03 -- mac=0x01, 0x0c, 0xcd, 0x01, 0x00, 0x03
+			    else --alternate load stream(not subscribed to)
+			    	pkt.payload.uint8[30] = 0x32 --PhsMeas2
 			    	pkt.payload.uint16[29] = 0x0000
-			    	pkt.payload.uint8[-9] = 0x01
+			    	pkt.payload.uint8[-9] = 0x01 --mac=0x01, 0x0c, 0xcd, 0x01, 0x00, 0x01
 			    end
 			end
 			smpCnt = (smpCnt + 1) % samples_per_sec
 
 			if counter == trigger then --trigger trip event
 				pkt = bufs[trigger_index]:getEthernetPacket()
+				pkt.payload.uint8[30] = 0x31 --PhsMeas1
 				pkt.payload.uint16[29] = 0xFFFF --smv value to trigger trip event
+				pkt.payload.uint8[-9] = 0x03 -- mac=0x01, 0x0c, 0xcd, 0x01, 0x00, 0x03
 
 				bufs[trigger_index]:enableTimestamps() --enable hw timestamp for this buffer
 				queue:sendN(bufs, burstsize) -- send it
@@ -382,6 +385,7 @@ function GOOSETimerSlave(queue, duration, bar)
             if pkt.payload.uint16[7] == 0xb888 and timestamp == -1 and pkt.payload.uint8[143] == 255 then
 		timestamp = bufs[i]:getTimestamp()
             end
+	    --print(string.format("%x %x = %x",pkt.payload.uint16[7]/256, pkt.payload.uint16[7]%256, pkt.payload.uint8[143] ))
 	    --bufs[i]:dump()
 	end
 	bufs:free(n)

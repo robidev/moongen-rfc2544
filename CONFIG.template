@@ -128,9 +128,9 @@ TEST_INTER_ARRIVAL_TIME_TYPE="hw" 		# <type of timestamper(hw|sw)> hw needs i350
 
 # measure full round-trip latency between SMV-9-2 packet and GOOSE trip
 TEST_IEC61850="y"
-TEST_IEC61850_DURATION=10 			# <single test duration>
+TEST_IEC61850_DURATION=3 			# <single test duration>
 TEST_IEC61850_SAMPLES_SEC=4000			# <how many sampled values per second to send>
-TEST_IEC61850_MEASUREMENTS=5 			# <how many measurements should be taken>
+TEST_IEC61850_MEASUREMENTS=20 			# <how many measurements should be taken>
 TEST_IEC61850_TYPE="hw" 			# <type of timestamper(hw|sw)> hw needs i350 or similar NIC that supports HW timestamping of all packets
 TEST_IEC61850_STREAMS=1 			# amount of streams to send simultaniously
 TEST_IEC61850_STREAM_TRIGGER_INDEX=1 		# index of stream that will generate the trigger
