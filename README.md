@@ -1,4 +1,6 @@
+# Introduction
 
+This testbench allows to send out timed packets, and accurately measure received packets on common (intel based) NIC's using DPDK. It contains a script environment to perform automated IEC61850 tests of several performance measurements, including latency, jitter, burst-rate, frame-size and SMV9-2 to GOOSE trip round trip measurements. It was build to measure the performance of the seapath project, and to integrated in an automated test-environment. However, it might also be usefull for (manual) generic IEC61850 performance testing, as GOOSE and SMV9-2 can be generated, and accurately measured upon transmiussion and reception provided a DPDK compatible NIC is used(I used a NIC with an intel i350 chipset). As output, a latex report is generated with the measurements performed. 
 
 # Prerequisites #
 
@@ -64,16 +66,16 @@ to retrieve the timestamp of a transmitted packet before sending the next packet
 
 ## Network requirement of the DUT
 
-The Device Under Test (DUT) will need to have 2 interfaces at minimum. One for control and one for testing.
-Part of the tests use DPDK technology on the DUT, so those will need to have a NIC that supports DPDK
+The Device Under Test (DUT) will need to have 2 network interfaces at minimum for remote control. One for control and one for testing. One network interface is possible while running manial tests.
+Part of the automated tests were intende for seapath and use DPDK technology on the DUT, such a DUT will need to have a NIC that supports DPDK
 
 
 # Test setup #
 
 - ensure ssh key is provided, and configured
-- ensure seapath image with test tools is used on DUT
-- configuring ip of control interface (e.g. Tester:10.0.0.2 <-> DUT:10.0.0.3)
-- cable between Tester-Intrerface and DUT-Interface
+- ensure a properly configured DUT is used for the test at hand. For seapath testing, a seapath image with test tools is used on the DUT
+- configuring ip of control interface (e.g. Tester:10.0.0.2 <-> DUT:10.0.0.3) for remote control
+- cable between Tester-Interface and DUT-Interface
 
 # Configuring tests #
 
