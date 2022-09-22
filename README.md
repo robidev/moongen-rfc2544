@@ -72,7 +72,7 @@ Part of the automated tests were intende for seapath and use DPDK technology on 
 
 # Test setup #
 
-- ensure ssh key is provided, and configured
+- ensure ssh key is provided, and configured if remote control is desired
 - ensure a properly configured DUT is used for the test at hand. For seapath testing, a seapath image with test tools is used on the DUT
 - configuring ip of control interface (e.g. Tester:10.0.0.2 <-> DUT:10.0.0.3) for remote control
 - cable between Tester-Interface and DUT-Interface
@@ -83,7 +83,7 @@ Modify the config items in; CONFIG
 You can there choose the following options:
 - set the folder where tests should be stored
 - set the DPDK PCI address of the interface the testbench should use
-- have the script set up the DUT, automatic via ssh or with manual prompts
+- have the script set up the DUT, automatic via ssh or with manual prompts (for non-seapath platforms)
 - choose the type of technology the DUT should use. current possiblities are kernel or DPDK. More will be added (docker, kvm)
 - test frame sizes. 128, 256, 512 are representative for common GOOSE/SMV9-2 packets
 - test duration
